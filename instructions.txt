@@ -1,0 +1,123 @@
+taken from: https://problemkaputt.de/pandocs.htm#cpuregistersandflags
+
+other infos:
+https://www.pastraiser.com/cpu/gameboy/gameboy_opcodes.html
+
+
+GMB 8bit-Loadcommands
+  ld   r,r         xx         4 ---- r=r                                        OK
+  ld   r,n         xx nn      8 ---- r=n                                        OK
+  ld   r,(HL)      xx         8 ---- r=(HL)                                     OK
+  ld   (HL),r      7x         8 ---- (HL)=r                                     OK
+  ld   (HL),n      36 nn     12 ----                                            OK
+  ld   A,(BC)      0A         8 ----                                            OK
+  ld   A,(DE)      1A         8 ----                                            OK
+  ld   A,(nn)      FA        16 ----                                            OK
+  ld   (BC),A      02         8 ----                                            OK
+  ld   (DE),A      12         8 ----                                            OK
+  ld   (nn),A      EA        16 ----                                            OK
+  ld   A,(FF00+n)  F0 nn     12 ---- read from io-port n (memory FF00+n)        OK
+  ld   (FF00+n),A  E0 nn     12 ---- write to io-port n (memory FF00+n)         OK
+  ld   A,(FF00+C)  F2         8 ---- read from io-port C (memory FF00+C)        OK
+  ld   (FF00+C),A  E2         8 ---- write to io-port C (memory FF00+C)         OK
+  ldi  (HL),A      22         8 ---- (HL)=A, HL=HL+1                            OK
+  ldi  A,(HL)      2A         8 ---- A=(HL), HL=HL+1                            OK 
+  ldd  (HL),A      32         8 ---- (HL)=A, HL=HL-1                            OK 
+  ldd  A,(HL)      3A         8 ---- A=(HL), HL=HL-1                            OK
+
+GMB 16bit-Loadcommands
+  ld   rr,nn       x1 nn nn  12 ---- rr=nn (rr may be BC,DE,HL or SP)           OK
+  ld   SP,HL       F9         8 ---- SP=HL                                      OK
+  push rr          x5        16 ---- SP=SP-2  (SP)=rr   (rr may be BC,DE,HL,AF) OK
+  pop  rr          x1        12 (AF) rr=(SP)  SP=SP+2   (rr may be BC,DE,HL,AF) OK
+
+GMB 8bit-Arithmetic/logical Commands
+  add  A,r         8x         4 z0hc A=A+r                                      OK
+  add  A,n         C6 nn      8 z0hc A=A+n                                      OK
+  add  A,(HL)      86         8 z0hc A=A+(HL)                                   OK
+  adc  A,r         8x         4 z0hc A=A+r+cy                                   OK
+  adc  A,n         CE nn      8 z0hc A=A+n+cy                                   OK
+  adc  A,(HL)      8E         8 z0hc A=A+(HL)+cy                                OK
+  sub  r           9x         4 z1hc A=A-r                                      OK
+  sub  n           D6 nn      8 z1hc A=A-n                                      OK
+  sub  (HL)        96         8 z1hc A=A-(HL)                                   OK
+  sbc  A,r         9x         4 z1hc A=A-r-cy                                   OK
+  sbc  A,n         DE nn      8 z1hc A=A-n-cy                                   OK
+  sbc  A,(HL)      9E         8 z1hc A=A-(HL)-cy                                OK
+  and  r           Ax         4 z010 A=A & r                                    OK
+  and  n           E6 nn      8 z010 A=A & n                                    OK
+  and  (HL)        A6         8 z010 A=A & (HL)                                 OK
+  xor  r           Ax         4 z000                                            OK
+  xor  n           EE nn      8 z000                                            OK
+  xor  (HL)        AE         8 z000                                            OK
+  or   r           Bx         4 z000 A=A | r                                    OK
+  or   n           F6 nn      8 z000 A=A | n                                    OK
+  or   (HL)        B6         8 z000 A=A | (HL)                                 OK
+  cp   r           Bx         4 z1hc compare A-r                                OK
+  cp   n           FE nn      8 z1hc compare A-n                                OK
+  cp   (HL)        BE         8 z1hc compare A-(HL)                             OK
+  inc  r           xx         4 z0h- r=r+1                                      OK 
+  inc  (HL)        34        12 z0h- (HL)=(HL)+1                                OK
+  dec  r           xx         4 z1h- r=r-1                                      OK
+  dec  (HL)        35        12 z1h- (HL)=(HL)-1                                OK
+  daa              27         4 z-0x decimal adjust akku                        OK
+  cpl              2F         4 -11- A = A xor FF                               OK
+
+GMB 16bit-Arithmetic/logical Commands
+  add  HL,rr     x9           8 -0hc HL = HL+rr     ;rr may be BC,DE,HL,SP      OK
+  inc  rr        x3           8 ---- rr = rr+1      ;rr may be BC,DE,HL,SP      OK
+  dec  rr        xB           8 ---- rr = rr-1      ;rr may be BC,DE,HL,SP      OK
+  add  SP,dd     E8          16 00hc SP = SP +/- dd ;dd is 8bit signed number   OK
+  ld   HL,SP+dd  F8          12 00hc HL = SP +/- dd ;dd is 8bit signed number   OK
+
+GMB Rotate- und Shift-Commands
+  rlca           07           4 000c rotate akku left                           OK
+  rla            17           4 000c rotate akku left through carry             OK
+  rrca           0F           4 000c rotate akku right                          OK
+  rra            1F           4 000c rotate akku right through carry            OK
+  rlc  r         CB 0x        8 z00c rotate left                                OK
+  rlc  (HL)      CB 06       16 z00c rotate left                                OK
+  rl   r         CB 1x        8 z00c rotate left through carry                  OK
+  rl   (HL)      CB 16       16 z00c rotate left through carry                  OK
+  rrc  r         CB 0x        8 z00c rotate right                               OK
+  rrc  (HL)      CB 0E       16 z00c rotate right                               OK
+  rr   r         CB 1x        8 z00c rotate right through carry                 OK
+  rr   (HL)      CB 1E       16 z00c rotate right through carry                 OK
+  sla  r         CB 2x        8 z00c shift left arithmetic (b0=0)               OK
+  sla  (HL)      CB 26       16 z00c shift left arithmetic (b0=0)               OK
+  swap r         CB 3x        8 z000 exchange low/hi-nibble                     OK
+  swap (HL)      CB 36       16 z000 exchange low/hi-nibble                     OK
+  sra  r         CB 2x        8 z00c shift right arithmetic (b7=b7)             OK
+  sra  (HL)      CB 2E       16 z00c shift right arithmetic (b7=b7)             OK
+  srl  r         CB 3x        8 z00c shift right logical (b7=0)                 OK
+  srl  (HL)      CB 3E       16 z00c shift right logical (b7=0)                 OK
+
+GMB Singlebit Operation Commands
+  bit  n,r       CB xx        8 z01- test bit n                                 OK
+  bit  n,(HL)    CB xx       12 z01- test bit n                                 OK
+  set  n,r       CB xx        8 ---- set bit n
+  set  n,(HL)    CB xx       16 ---- set bit n
+  res  n,r       CB xx        8 ---- reset bit n
+  res  n,(HL)    CB xx       16 ---- reset bit n
+
+GMB CPU-Controlcommands
+  ccf            3F           4 -00c cy=cy xor 1                                OK
+  scf            37           4 -001 cy=1                                       OK
+  nop            00           4 ---- no operation                               OK
+  halt           76         N*4 ---- halt until interrupt occurs (low power)    OK
+  stop           10 00        ? ---- low power standby mode (VERY low power)    OK
+  di             F3           4 ---- disable interrupts, IME=0                  OK
+  ei             FB           4 ---- enable interrupts, IME=1                   OK
+
+GMB Jumpcommands
+  jp   nn        C3 nn nn    16 ---- jump to nn, PC=nn                          OK
+  jp   HL        E9           4 ---- jump to HL, PC=HL                          OK
+  jp   f,nn      xx nn nn 16;12 ---- conditional jump if nz,z,nc,c              OK
+  jr   PC+dd     18 dd       12 ---- relative jump to nn (PC=PC+/-7bit)         OK
+  jr   f,PC+dd   xx dd     12;8 ---- conditional relative jump if nz,z,nc,c     OK
+  call nn        CD nn nn    24 ---- call to nn, SP=SP-2, (SP)=PC, PC=nn        OK
+  call f,nn      xx nn nn 24;12 ---- conditional call if nz,z,nc,c              OK
+  ret            C9          16 ---- return, PC=(SP), SP=SP+2                   OK
+  ret  f         xx        20;8 ---- conditional return if nz,z,nc,c            OK
+  reti           D9          16 ---- return and enable interrupts (IME=1)       OK
+  rst  n         xx          16 ---- call to 00,08,10,18,20,28,30,38            OK
