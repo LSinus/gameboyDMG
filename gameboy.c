@@ -10,6 +10,7 @@
 #include <SDL2/SDL.h>
 
 #define CLOCK_FREQ_HZ 4194304
+#define DIV_INC_FREQ_HZ 16384
 #define FRAME_RATE_HZ 59.7
 #define CYCLES_PER_FRAME (CLOCK_FREQ_HZ / FRAME_RATE_HZ)
 #define NANOSECONDS_PER_FRAME (1000000000L / FRAME_RATE_HZ)
@@ -57,6 +58,20 @@ typedef struct PPU {
     uint8_t ly;
 } PPU;
 
+/* Definition of Timer state machine */
+typedef struct TIMER {
+    size_t div_cycle_counter;
+    size_t timer_cycle_counter;
+} TIMER;
+
+/* JoyPad state struct */
+typedef struct JOYPAD {
+    bool start, select, b, a;
+    bool down, up, left, right;
+} JOYPAD;
+
+JOYPAD joypad = {0};
+
 /* This function will be transformed in a callback for the final user in order 
    to display data to the screen */
 void process_frame_buffer(int x, int y, uint8_t color){
@@ -103,6 +118,24 @@ uint8_t ReadMem(uint16_t addr){
 
     if(boot_rom_enabled && addr < 0x0100){
         return boot[addr];
+    }
+
+    if(addr == 0xFF00){
+        uint8_t P1 = memory[0xFF00];
+        P1 |= 0x0F; // all buttons unpressed (0 pressed 1 unpressed)
+        if((P1 & 0x10) == 0){ // D-Pad buttons
+            if (joypad.right) P1 &= ~0x01; // Bit 0 (Right)
+            if (joypad.left)  P1 &= ~0x02; // Bit 1 (Left)
+            if (joypad.up)    P1 &= ~0x04; // Bit 2 (Up)
+            if (joypad.down)  P1 &= ~0x08; // Bit 3 (Down)
+        }
+        if ((P1 & 0x20) == 0) { // Action buttons
+            if (joypad.a)      P1 &= ~0x01; // Bit 0 (A)
+            if (joypad.b)      P1 &= ~0x02; // Bit 1 (B)
+            if (joypad.select) P1 &= ~0x04; // Bit 2 (Select)
+            if (joypad.start)  P1 &= ~0x08; // Bit 3 (Start)
+        }
+        return P1;
     }
 
     return memory[addr];
@@ -288,6 +321,44 @@ void ppu_step(PPU *ppu, int cycles){
                 }
             }
             break;
+    }
+}
+
+/* This function updates timers for clock cycles executed */
+void timer_step(TIMER *timer, int cycles){
+    timer->div_cycle_counter   += cycles;
+    timer->timer_cycle_counter += cycles;
+
+    if(timer->div_cycle_counter >= (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ)){
+        size_t increment = timer->div_cycle_counter / (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ);
+        memory[0xFF04] += increment;
+        timer->div_cycle_counter %= (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ);
+    }
+
+    uint8_t TAC = memory[0xFF07];
+    if((TAC & 0x04) != 0){ // Enable = 1 so increment TIMA
+        size_t tima_inc_rate;
+
+        switch(TAC & 0x03){ // last 2 bits indicate the increment rate for TIMA
+            case 0b00: tima_inc_rate = 4096;   break;
+            case 0b01: tima_inc_rate = 262144; break;
+            case 0b10: tima_inc_rate = 65536;  break;
+            case 0b11: tima_inc_rate = 16384;  break;
+        }
+
+        if(timer->timer_cycle_counter >= (CLOCK_FREQ_HZ / tima_inc_rate)){
+            size_t increment = timer->timer_cycle_counter / (CLOCK_FREQ_HZ / tima_inc_rate);
+            size_t result = (uint16_t)memory[0xFF05] + increment;
+            if(result > 0xFF){ // TIMA overflows so resets it to TMA value
+                memory[0xFF05] = memory[0xFF06];
+                // request interrupt
+                memory[0xFF0F] |= 0x04;
+            }
+            else{
+                memory[0xFF05] += increment;
+            }
+            timer->timer_cycle_counter %= (CLOCK_FREQ_HZ / tima_inc_rate);
+        }
     }
 }
 
@@ -1531,6 +1602,13 @@ int STOP(CPU *cpu){
        fetched, so fetch the following 0x00 byte. */
     FetchByte(cpu);
 
+    memory[0xFF04] = 0; // resets DIV register 
+    uint8_t TAC = memory[0xFF07];
+
+    if((TAC & 0x0040) != 0){ // Enable = 1 increment TIMA
+
+    }
+
     // TODO CHANGE AFTER PPU AND JOYPAD
     cpu->halted = true;
     return 4;
@@ -2518,6 +2596,7 @@ void InitializePowerOnState(CPU *cpu, PPU *ppu){
     ppu->ly = 0;
 
     // Initialize I/O registers
+    memory[0xFF00] = 0xCF; // Joypad input
     memory[0xFF05] = 0x00; memory[0xFF06] = 0x00; memory[0xFF07] = 0x00;
     memory[0xFF10] = 0x80; memory[0xFF11] = 0xBF; memory[0xFF12] = 0xF3;
     memory[0xFF14] = 0xBF; memory[0xFF16] = 0x3F; memory[0xFF17] = 0x00;
@@ -2525,7 +2604,6 @@ void InitializePowerOnState(CPU *cpu, PPU *ppu){
     memory[0xFF1C] = 0x9F; memory[0xFF1E] = 0xBF; memory[0xFF20] = 0xFF;
     memory[0xFF21] = 0x00; memory[0xFF22] = 0x00; memory[0xFF23] = 0xBF;
     memory[0xFF24] = 0x77; memory[0xFF25] = 0xF3; memory[0xFF26] = 0xF1;
-    //memory[0xFF40] = 0x91; // LCDC - LCD enabled, BG enabled
     memory[0xFF41] = 0x02; // STAT - Start in mode 2 (OAM scan)
     memory[0xFF42] = 0x00; // SCY
     memory[0xFF43] = 0x00; // SCX
@@ -2580,6 +2658,20 @@ void InitializeGameROM(char* romPath) {
     }
 }
 
+void process_input(SDL_Event *event){
+    bool is_pressed = (event->type == SDL_KEYDOWN);
+    switch (event->key.keysym.sym) {
+        case SDLK_b:    joypad.start  = is_pressed; break;
+        case SDLK_v:    joypad.select = is_pressed; break;
+        case SDLK_m:    joypad.b      = is_pressed; break;
+        case SDLK_k:    joypad.a      = is_pressed; break;
+        case SDLK_s:    joypad.down   = is_pressed; break;
+        case SDLK_w:    joypad.up     = is_pressed; break;
+        case SDLK_a:    joypad.left   = is_pressed; break;
+        case SDLK_d:    joypad.right  = is_pressed; break;
+    }
+}
+
 int main(int argc, char **argv){
     if(argc <= 1){
         fprintf(stderr, "[ERROR] Usage: ./gameboy <path-to-ROM>\n");
@@ -2589,6 +2681,7 @@ int main(int argc, char **argv){
 
     CPU cpu = {0};
     PPU ppu = {0};
+    TIMER timer = {0};
     InitializeInstructionTable();
     InitializePowerOnState(&cpu, &ppu);
     InitializeBootROM();
@@ -2614,23 +2707,23 @@ int main(int argc, char **argv){
     SDL_Event event;
 
     while(cpu.running){
-        while (SDL_PollEvent(&event)) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+        int cycles_this_frame = 0;
+        while (cycles_this_frame < CYCLES_PER_FRAME && cpu.running){
+            while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 cpu.running = 0;
             }
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_d) {
+            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_q) {
                 printf("=== DEBUG INFO ===\n");
                 print_cpu_state(&cpu);
                 printf("PPU: LY=%d, Mode=%d, Cycles=%zu\n", ppu.ly, ppu.mode, ppu.cycle_counter);
                 printf("LCDC=0x%02X, STAT=0x%02X, BGP=0x%02X\n", 
                        memory[0xFF40], memory[0xFF41], memory[0xFF47]);
             }
+            process_input(&event);
         }
-
-        clock_gettime(CLOCK_MONOTONIC, &start_time);
-
-        int cycles_this_frame = 0;
-        while (cycles_this_frame < CYCLES_PER_FRAME && cpu.running){
             int cycles_executed = 0;
 
             // First, check if an interrupt needs to be serviced.
@@ -2646,7 +2739,7 @@ int main(int argc, char **argv){
             cycles_this_frame += cycles_executed;
 
             ppu_step(&ppu, cycles_executed);
-            // timer_step(&timer, cycles_executed);
+            timer_step(&timer, cycles_executed);
         }
         
         SDL_UpdateTexture(texture, NULL, framebuffer, USER_WINDOW_WIDTH * sizeof(uint32_t));  // Update the texture with the new pixel data
