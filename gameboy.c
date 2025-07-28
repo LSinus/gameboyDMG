@@ -24,6 +24,8 @@
 
 uint32_t framebuffer[USER_WINDOW_HEIGHT][USER_WINDOW_WIDTH] = {0};
 
+bool boot_rom_enabled = true;
+uint8_t boot[256];
 uint8_t memory[65536];
 
 /* Definition of CPU for Nintendo Gameboy */
@@ -99,6 +101,10 @@ uint8_t ReadMem(uint16_t addr){
         }
     }
 
+    if(boot_rom_enabled && addr < 0x0100){
+        return boot[addr];
+    }
+
     return memory[addr];
 }
 
@@ -145,6 +151,10 @@ void WriteMem(uint16_t addr, uint8_t data){
                 return; // OAM is inaccessible
             }
         }
+    }
+
+    if (addr == 0xFF50) {
+        boot_rom_enabled = false; // Disable the boot ROM
     }
 
     if(addr != 0xFF04) memory[addr] = data;
@@ -240,10 +250,26 @@ void ppu_step(PPU *ppu, int cycles){
                 ppu->cycle_counter -= 204;
                 ppu->ly++;
                 memory[0xFF44] = ppu->ly;
+                uint8_t LYC    = memory[0xFF45];
+                uint8_t STAT   = memory[0xFF41];
+
+                if(ppu->ly == LYC){
+                    // Set coincidence Flag (second bit in stat)
+                    memory[0xFF41] |= 0x04;
+                    
+                    // Check if the interrupt for this event is enabled (bit 6)
+                    if((STAT & 0x40) != 0){
+                        memory[0xFF0F] |= 0x02; // request STAT interrupt
+                    } else{
+                        memory[0xFF41] &= ~0x04;
+                    }
+                }
 
                 if (ppu->ly == 144) {
                     ppu_set_mode(ppu, MODE_1_VBLANK);
-                    // TODO: Request V-Blank interrupt here
+                    
+                    // Request V-Blank interrupt
+                    memory[0xFF0F] |= 0x1; // Interrupt flag
                 } else {
                     ppu_set_mode(ppu, MODE_2_OAM_SCAN);
                 }
@@ -277,7 +303,7 @@ Instruction cb_instruction_table[256];
 
 /* ---- FUNCTION POINTERS FOR OPCODES SECTION ---- */
 int UNKNOWN(CPU *cpu){
-    uint8_t opcode = memory[cpu->PC - 1];
+    uint8_t opcode = ReadMem(cpu->PC - 1);
     fprintf(stderr, "Error: Unknown opcode 0x%02X at address 0x%04X\n", opcode, cpu->PC - 1);
     // Stop the emulator
     cpu->running = 0; 
@@ -474,20 +500,20 @@ int ADD_A_r(CPU *cpu){
     uint16_t a = cpu->AF >> 8;
 
     switch (opcode){
-        case 0x80: n = cpu->BC >> 8;     break; // Register B
-        case 0x81: n = cpu->BC & 0xFF;   break; // Register C
-        case 0x82: n = cpu->DE >> 8;     break; // Register D
-        case 0x83: n = cpu->DE & 0xFF;   break; // Register E
-        case 0x84: n = cpu->HL >> 8;     break; // Register H
-        case 0x85: n = cpu->HL & 0xFF;   break; // Register L
+        case 0x80: n = cpu->BC >> 8;      break; // Register B
+        case 0x81: n = cpu->BC & 0xFF;    break; // Register C
+        case 0x82: n = cpu->DE >> 8;      break; // Register D
+        case 0x83: n = cpu->DE & 0xFF;    break; // Register E
+        case 0x84: n = cpu->HL >> 8;      break; // Register H
+        case 0x85: n = cpu->HL & 0xFF;    break; // Register L
         case 0x86: n = ReadMem(cpu->HL);  break; // Address (HL)
-        case 0x87: n = cpu->AF >> 8;     break; // Register A
+        case 0x87: n = cpu->AF >> 8;      break; // Register A
     }
     
     uint16_t result = n + a;
 
     cpu->AF &= 0xFF00; // Flags reset
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) + (n & 0x0F) > 0x0F) cpu->AF |= 0x20; // Half-carry flag
@@ -496,7 +522,7 @@ int ADD_A_r(CPU *cpu){
     if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0x86 ? 8 : 4;
 }
@@ -509,7 +535,7 @@ int ADD_A_d8(CPU *cpu){
     uint16_t result = n + a;
 
     cpu->AF &= 0xFF00; // Flags reset
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) + (n & 0x0F) > 0x0F) cpu->AF |= 0x20; // Half-carry flag
@@ -518,7 +544,7 @@ int ADD_A_d8(CPU *cpu){
     if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -546,7 +572,7 @@ int ADC_A_r(CPU *cpu){
     uint16_t result = n + a + c;
 
     cpu->AF &= 0xFF00; // Flags reset
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) + (c & 0x0F) + (n & 0x0F) > 0x0F) cpu->AF |= 0x20; // Half-carry flag
@@ -555,7 +581,7 @@ int ADC_A_r(CPU *cpu){
     if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0x8E ? 8 : 4;
 }
@@ -564,12 +590,12 @@ int ADC_A_r(CPU *cpu){
 int ADC_A_d8(CPU *cpu){
     uint16_t n = FetchByte(cpu);
     uint16_t a = cpu->AF >> 8;
-    uint16_t c = cpu->AF & 0x0010;
+    uint16_t c = (cpu->AF & 0x0010) >> 4;
     
     uint16_t result = n + a + c;
 
     cpu->AF &= 0xFF00; // Flags reset
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) + (c & 0x0F) + (n & 0x0F) > 0x0F) cpu->AF |= 0x20; // Half-carry flag
@@ -578,7 +604,7 @@ int ADC_A_d8(CPU *cpu){
     if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -603,8 +629,9 @@ int SUB_A_r(CPU *cpu){
     
     uint16_t result = a - n;
 
-    cpu->AF &= 0xFF40; // Flags reset and N = 1
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x40;  // N flag set
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) < (n & 0x0F)) cpu->AF |= 0x20; // Half-carry flag
@@ -613,7 +640,7 @@ int SUB_A_r(CPU *cpu){
     if(a < n) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (result << 8) | (cpu->AF & 0x00FF);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0x96 ? 8 : 4;
 }
@@ -625,8 +652,9 @@ int SUB_A_d8(CPU *cpu){
     
     uint16_t result = a - n;
 
-    cpu->AF &= 0xFF40; // Flags reset and N = 1
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x40;  // N flag set
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) < (n & 0x0F)) cpu->AF |= 0x20; // Half-carry flag
@@ -635,7 +663,7 @@ int SUB_A_d8(CPU *cpu){
     if(a < n) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+   cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -646,8 +674,8 @@ int SBC_A_r(CPU *cpu){
 
     uint16_t n;
     uint16_t a = cpu->AF >> 8;
-    uint16_t c = cpu->AF & 0x0010;
-
+    uint16_t c = (cpu->AF & 0x0010) >> 4;
+    
     switch (opcode){
         case 0x98: n = cpu->BC >> 8;     break; // Register B
         case 0x99: n = cpu->BC & 0xFF;   break; // Register C
@@ -661,8 +689,9 @@ int SBC_A_r(CPU *cpu){
     
     uint16_t result = a - n - c;
 
-    cpu->AF &= 0xFF40; // Flags reset and N = 1
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x40;  // N flag set
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) < (n & 0x0F) + c) cpu->AF |= 0x20; // Half-carry flag
@@ -671,7 +700,7 @@ int SBC_A_r(CPU *cpu){
     if(a < n + c) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0x9E ? 8 : 4;
 }
@@ -680,12 +709,13 @@ int SBC_A_r(CPU *cpu){
 int SBC_A_d8(CPU *cpu){
     uint16_t n = FetchByte(cpu);
     uint16_t a = cpu->AF >> 8;
-    uint16_t c = cpu->AF & 0x0010;
+    uint16_t c = (cpu->AF & 0x0010) >> 4;
     
     uint16_t result = a - n - c;
 
-    cpu->AF &= 0xFF40; // Flags reset and N = 1
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x40;  // N flag set
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) < (n & 0x0F) + c) cpu->AF |= 0x20; // Half-carry flag
@@ -694,7 +724,7 @@ int SBC_A_d8(CPU *cpu){
     if(a < n + c) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -719,11 +749,12 @@ int AND_A_r(CPU *cpu){
     
     uint16_t result = a & n;
 
-    cpu->AF &= 0xFF20; // Flags reset and H = 1
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x20;  // H flag set
     if(result == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0xA6 ? 8 : 4;
 }
@@ -734,11 +765,12 @@ int AND_A_d8(CPU *cpu){
     
     uint16_t result = a & n;
 
-    cpu->AF &= 0xFF20; // Flags reset and H = 1
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x20;  // H flag set
     if(result == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -767,7 +799,7 @@ int OR_A_r(CPU *cpu){
     if(result == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0xB6 ? 8 : 4;
 }
@@ -782,7 +814,7 @@ int OR_A_d8(CPU *cpu){
     if(result == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -811,7 +843,7 @@ int XOR_A_r(CPU *cpu){
     if(result == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+   cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return opcode == 0xAE ? 8 : 4;
 }
@@ -826,7 +858,7 @@ int XOR_A_d8(CPU *cpu){
     if(result == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
-    cpu->AF = (cpu->AF & 0x00FF) | (result << 8);
+    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
 
     return 8;
 }
@@ -851,8 +883,9 @@ int CP_A_r(CPU *cpu){
     
     uint16_t result = a - n;
 
-    cpu->AF &= 0xFF40; // Flags reset and N = 1
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x40;  // N flag set
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) < (n & 0x0F)) cpu->AF |= 0x20; // Half-carry flag
@@ -871,8 +904,9 @@ int CP_A_d8(CPU *cpu){
     
     uint16_t result = a - n;
 
-    cpu->AF &= 0xFF40; // Flags reset and N = 1
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    cpu->AF &= 0xFF00; // Flags reset
+    cpu->AF |= 0x40;  // N flag set
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     if((a & 0x0F) < (n & 0x0F)) cpu->AF |= 0x20; // Half-carry flag
@@ -971,37 +1005,41 @@ int DEC_r(CPU *cpu){
 /* Corrects the value into A for Binary Coded Decimal after an addition or a subtraction */
 int DAA(CPU *cpu) {
     uint8_t a = (uint8_t)(cpu->AF >> 8);
-    uint16_t correction = 0;
+    uint16_t result = a;
     
     bool n_flag = (cpu->AF & 0x40) != 0;
     bool h_flag = (cpu->AF & 0x20) != 0;
     bool c_flag = (cpu->AF & 0x10) != 0;
 
-    if (n_flag) { // Last operation was a subtraction
+    if (n_flag) { // Last operation was subtraction
         if (h_flag) {
-            correction -= 0x06;
+            result = (result - 0x06) & 0xFF;
         }
         if (c_flag) {
-            correction -= 0x60;
+            result = (result - 0x60) & 0xFF;
         }
-    } else { // Last operation was an addition
+    } else { // Last operation was addition
         if (h_flag || (a & 0x0F) > 9) {
-            correction += 0x06;
+            result += 0x06;
         }
-        if (c_flag || a > 0x99) {
-            correction += 0x60;
-            cpu->AF |= 0x10; // The new Carry flag gets set if a wrap-around happened
+        if (c_flag || result > 0x99) {
+            result += 0x60;
+            cpu->AF |= 0x10; // Set carry flag
         }
     }
 
-    a += correction;
+    // Set zero flag
+    if ((result & 0xFF) == 0) {
+        cpu->AF |= 0x80;
+    } else {
+        cpu->AF &= ~0x80;
+    }
 
-    if (a == 0) cpu->AF |= 0x80; // Zero flag
-    else cpu->AF &= ~0x80;
-
-    cpu->AF &= ~0x20; // Clear H flag
+    // Clear half-carry flag (always cleared after DAA)
+    cpu->AF &= ~0x20;
     
-    cpu->AF = (uint16_t)(a << 8) | (cpu->AF & 0x00F0);
+    // Update A register, preserve flags
+    cpu->AF = (cpu->AF & 0x00FF) | ((result & 0xFF) << 8);
 
     return 4;
 }
@@ -1073,14 +1111,10 @@ int LD_HL_SPs8(CPU *cpu){
     int8_t n = (int8_t)FetchByte(cpu);
     uint16_t result = cpu->SP + n;
 
-    cpu->AF &= ~0x80; // Clear the Z flag
-    cpu->AF &= ~0x40; // Clear the N flag
+    cpu->AF = 0x00; // Clear Z, N, H, C
 
-    if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
-    else cpu->AF &= ~0x10;
-
-    if((cpu->SP & 0x0F) + (n & 0x0F) > 0x0F) cpu->AF |= 0x20; // Half carry flag
-    else cpu->AF &= ~0x20;
+    if( ((cpu->SP & 0x0F) + (n & 0x0F)) > 0x0F ) cpu->AF |= 0x20; // Half Carry
+    if( ((cpu->SP & 0xFF) + (n & 0xFF)) > 0xFF ) cpu->AF |= 0x10; // Carry
 
     cpu->HL = result;
     return 12;
@@ -1184,7 +1218,7 @@ int ADD_HL_rr(CPU *cpu){
 
     cpu->AF &= ~0x40; // Clear the N flag
 
-    if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
+    if(result > 0xFFFF) cpu->AF |= 0x10; // Carry flag
     else cpu->AF &= ~0x10;
 
     if((cpu->HL & 0x0FFF) + (n & 0x0FFF) > 0x0FFF) cpu->AF |= 0x20; // Half carry flag
@@ -1200,15 +1234,11 @@ int ADD_SP_s8(CPU *cpu){
 
     uint16_t result = cpu->SP + n;
 
-    cpu->AF &= ~0x80; // Clear the Z flag
-    cpu->AF &= ~0x40; // Clear the N flag
+   cpu->AF = 0x00; // Clear Z, N, H, C
 
-    if(result > 0xFF) cpu->AF |= 0x10; // Carry flag
-    else cpu->AF &= ~0x10;
-
-    if((cpu->HL & 0x0F) + (n & 0x0F) > 0x0F) cpu->AF |= 0x20; // Half carry flag
-    else cpu->AF &= ~0x20;
-
+    if( ((cpu->SP & 0x0F) + (n & 0x0F)) > 0x0F ) cpu->AF |= 0x20; // Half Carry
+    if( ((cpu->SP & 0xFF) + (n & 0xFF)) > 0xFF ) cpu->AF |= 0x10; // Carry
+    
     cpu->SP = result;
     return 16;
 }
@@ -1296,7 +1326,7 @@ int JR_NZ_d8(CPU *cpu){
 int JR_NC_d8(CPU *cpu){
     int8_t offset = (int8_t)FetchByte(cpu);
     if((cpu->AF & 0x0010) == 0x0000){ // Carry flag not set
-       cpu->PC += offset;
+        cpu->PC += offset;
         return 12;
     }
     return 8;
@@ -1486,7 +1516,12 @@ int NOP(CPU *cpu){ return 4; }
 
 /* This performs the HALT instruction */
 int HALT(CPU *cpu){ 
-    // TODO HANDLE INTERRUPTS
+    // HALT bug
+   /* if(!cpu->IME ){
+        uint8_t IE = memory[0xFF0F];
+        uint8_t IF = memory[0xFFFF];
+        if((IE & IF) != 0) cpu->PC--;
+    }*/
     cpu->halted = true;
     return 4;    
 }
@@ -1579,10 +1614,10 @@ int RRA(CPU *cpu){
 /* Rotates left the value stored in register r */
 int RLC_r(CPU *cpu){
     uint8_t opcode = ReadMem(cpu->PC-1);
-
+    uint8_t source_id = opcode & 0x07;
     uint8_t value;
 
-    switch (opcode) {
+    switch (source_id) {
         case 0: value = (uint8_t)(cpu->BC >> 8);   break; // B
         case 1: value = (uint8_t)(cpu->BC & 0xFF); break; // C
         case 2: value = (uint8_t)(cpu->DE >> 8);   break; // D
@@ -1606,7 +1641,7 @@ int RLC_r(CPU *cpu){
     if(carry_set) value |= 0x01;
     if(value == 0) cpu->AF |= 0x80; // Zero flag
 
-    switch (opcode) {
+    switch (source_id) {
         case 0: cpu->BC = ((uint16_t)(value) << 8) | (cpu->BC & 0x00FF);   break; // B
         case 1: cpu->BC = (cpu->BC & 0xFF00) | value;                      break; // C
         case 2: cpu->DE = ((uint16_t)(value) << 8) | (cpu->DE & 0x00FF);   break; // D
@@ -1617,7 +1652,7 @@ int RLC_r(CPU *cpu){
         case 7: cpu->AF = ((uint16_t)(value) << 8) | (cpu->AF & 0x00FF);   break; // A
     }
 
-    return opcode == 6 ? 16 : 8;
+    return source_id == 6 ? 16 : 8;
 }
 
 /* Rotates right the value stored in register r */
@@ -2017,6 +2052,52 @@ int RES_n_r(CPU *cpu){
     return source_id == 6 ? 16 : 8;
 }
 
+/* This function allows the cpu to correctly handle interrupts */
+int handleInterrupts(CPU *cpu){
+    if(!cpu->IME){
+        return 0;
+    }
+
+    uint8_t IE = ReadMem(0xFFFF);
+    uint8_t IF = ReadMem(0xFF0F);
+
+    uint8_t requested = IE & IF;
+
+    if (requested == 0) {
+        return 0;
+    }
+
+    // An interrupt is happening, so the CPU is no longer halted
+    cpu->halted = false;
+    cpu->IME = false; // Disable further interrupts
+
+    // Push PC to the stack
+    cpu->SP -= 2;
+    WriteMem(cpu->SP, (uint8_t)(cpu->PC & 0xFF));
+    WriteMem(cpu->SP + 1, (uint8_t)(cpu->PC >> 8));
+
+    // Check interrupts in order of priority
+    if (requested & 0x01) { // V-Blank
+        memory[0xFF0F] &= ~0x01; // Clear the request flag
+        cpu->PC = 0x0040;
+    } else if (requested & 0x02) { // LCD STAT
+        memory[0xFF0F] &= ~0x02;
+        cpu->PC = 0x0048;
+    } else if (requested & 0x04) { // Timer
+        memory[0xFF0F] &= ~0x04;
+        cpu->PC = 0x0050;
+    } else if (requested & 0x08) { // Serial
+        memory[0xFF0F] &= ~0x08;
+        cpu->PC = 0x0058;
+    } else if (requested & 0x10) { // Joypad
+        memory[0xFF0F] &= ~0x10;
+        cpu->PC = 0x0060;
+    }
+
+    return 20;
+}
+
+
 
 /* utility function to initialize instruction table */
 void InitializeInstructionTable(){
@@ -2279,7 +2360,7 @@ void InitializeInstructionTable(){
     instruction_table[0xE9] = JP_HL;
 
     instruction_table[0xC2] = JP_NZ_d16;
-    instruction_table[0xD2] = JP_NZ_d16;
+    instruction_table[0xD2] = JP_NC_d16;
     instruction_table[0xCA] = JP_Z_d16;
     instruction_table[0xDA] = JP_C_d16;
 
@@ -2291,8 +2372,8 @@ void InitializeInstructionTable(){
 
     instruction_table[0xCD] = CALL;
 
-    instruction_table[0xCC] = CALL_NZ;
-    instruction_table[0xC4] = CALL_Z;
+    instruction_table[0xCC] = CALL_Z;
+    instruction_table[0xC4] = CALL_NZ;
     instruction_table[0xD4] = CALL_NC;
     instruction_table[0xDC] = CALL_C;
 
@@ -2458,12 +2539,12 @@ void InitializePowerOnState(CPU *cpu, PPU *ppu){
 
 // Add CPU state debugging
 void print_cpu_state(CPU *cpu) {
-    printf("PC:%04X SP:%04X AF:%04X BC:%04X DE:%04X HL:%04X\n", 
-           cpu->PC, cpu->SP, cpu->AF, cpu->BC, cpu->DE, cpu->HL);
+    printf("PC:%04X SP:%04X AF:%04X BC:%04X DE:%04X HL:%04X\n Halted: %d, IME: %d, Running: %d, boot ROM enabled: %d \n\n", 
+           cpu->PC, cpu->SP, cpu->AF, cpu->BC, cpu->DE, cpu->HL, cpu->halted, cpu->IME, cpu->running, boot_rom_enabled);
 }
 
 void create_dummy_header() {
-    // This is the correct, official Nintendo logo data
+    // This is the correct, official Nintendo logo A
     uint8_t nintendo_logo[48] = {
         0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
         0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
@@ -2479,8 +2560,16 @@ void create_dummy_header() {
     memory[0x014D] = 0xEA;
 }
 
-void InitializeTestProgram() {
-    FILE *program = fopen("dmg.bin", "rb");
+void InitializeBootROM() {
+    FILE *bootROM = fopen("gb-bootroms/bin/dmg.bin", "rb");
+    if(bootROM){
+        fread(boot, 256, 1, bootROM);
+        fclose(bootROM);
+    }
+}
+
+void InitializeGameROM(char* romPath) {
+    FILE *program = fopen(romPath, "rb");
     size_t program_length;
     if(program){
         fseek(program, 0, SEEK_END);
@@ -2491,13 +2580,20 @@ void InitializeTestProgram() {
     }
 }
 
-int main(){
+int main(int argc, char **argv){
+    if(argc <= 1){
+        fprintf(stderr, "[ERROR] Usage: ./gameboy <path-to-ROM>\n");
+        return 1;
+    }
+
+
     CPU cpu = {0};
     PPU ppu = {0};
     InitializeInstructionTable();
     InitializePowerOnState(&cpu, &ppu);
-    create_dummy_header();
-    InitializeTestProgram();
+    InitializeBootROM();
+    InitializeGameROM(argv[1]);
+    //create_dummy_header();
 
     print_cpu_state(&cpu);
 
@@ -2535,32 +2631,28 @@ int main(){
 
         int cycles_this_frame = 0;
         while (cycles_this_frame < CYCLES_PER_FRAME && cpu.running){
-            if(cpu.halted){
-                cycles_this_frame += 4;
+            int cycles_executed = 0;
+
+            // First, check if an interrupt needs to be serviced.
+            cycles_executed += handleInterrupts(&cpu);
+            
+            if (cpu.halted) {
+                cycles_executed += 4;
+            } else {
+                uint8_t opcode = FetchByte(&cpu);        
+                cycles_executed = instruction_table[opcode](&cpu);
             }
-            else{
-                /* Fetch and execute one instruction */
-                uint8_t opcode = FetchByte(&cpu);
-                //printf("pc: 0x%04X opcode: 0x%02X\n",cpu.PC, opcode);
 
-                /* Decode and execute the instruction */
-                int cycles_executed = instruction_table[opcode](&cpu);
+            cycles_this_frame += cycles_executed;
 
-                cycles_this_frame += cycles_executed;
-
-                // TODO: Update other components (PPU, Timers) with cycles_executed
-                ppu_step(&ppu, cycles_executed);
-            }
+            ppu_step(&ppu, cycles_executed);
+            // timer_step(&timer, cycles_executed);
         }
         
-        // 1. Update the texture with the new pixel data
-        SDL_UpdateTexture(texture, NULL, framebuffer, USER_WINDOW_WIDTH * sizeof(uint32_t));
-        // 2. Clear the renderer
-        SDL_RenderClear(renderer);
-        // 3. Copy the texture to the renderer
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
-        // 4. Present the renderer
-        SDL_RenderPresent(renderer);
+        SDL_UpdateTexture(texture, NULL, framebuffer, USER_WINDOW_WIDTH * sizeof(uint32_t));  // Update the texture with the new pixel data
+        SDL_RenderClear(renderer); // Clear the renderer
+        SDL_RenderCopy(renderer, texture, NULL, NULL); // Copy the texture to the renderer
+        SDL_RenderPresent(renderer); // Present the renderer
 
         clock_gettime(CLOCK_MONOTONIC, &end_time);
         long time_elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
