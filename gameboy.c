@@ -56,6 +56,8 @@ typedef struct PPU {
     PPU_MODE mode;
     size_t cycle_counter;
     uint8_t ly;
+    uint32_t visible_objects[10];
+    uint8_t visible_objects_counter;
 } PPU;
 
 /* Definition of Timer state machine */
@@ -70,7 +72,22 @@ typedef struct JOYPAD {
     bool down, up, left, right;
 } JOYPAD;
 
+/* DMA state struct */
+typedef struct DMA {
+    bool running;
+    size_t cycles;
+} DMA;
+
 JOYPAD joypad = {0};
+DMA dma = {0};
+
+/* This function updates the dma if active */
+void dma_step(int cycles){
+    if(dma.running){
+        dma.cycles += cycles;
+        if(dma.cycles >= 640) dma.running = false;
+    }
+}
 
 /* This function will be transformed in a callback for the final user in order 
    to display data to the screen */
@@ -97,6 +114,13 @@ uint8_t ppu_get_mode() {
 
 uint8_t ReadMem(uint16_t addr){
     uint8_t ppu_mode = ppu_get_mode();
+
+    // check for dma running
+    if(dma.running){
+        if(addr < 0xFF80 || addr > 0xFFFE){
+            return 0xFF;
+        }
+    }
 
     // Check for VRAM read restrictions
     //Check for VRAM read restrictions
@@ -186,8 +210,15 @@ void WriteMem(uint16_t addr, uint8_t data){
         }
     }
 
-    if (addr == 0xFF50) {
+    if(addr == 0xFF50){
         boot_rom_enabled = false; // Disable the boot ROM
+    }
+
+    if(addr == 0xFF46){ // DMA transfer
+        uint16_t transfer_source = data * 0x0100;
+        memcpy(&memory[0xFE00], &memory[transfer_source], 40*4); // 40 sprites 4 byte each
+        dma.running = true;
+        dma.cycles = 0;
     }
 
     if(addr != 0xFF04) memory[addr] = data;
@@ -201,12 +232,14 @@ void WriteMem(uint16_t addr, uint8_t data){
 void ppu_scanline(PPU *ppu){
     // cycle for an entire line
     for(uint8_t x = 0; x < WINDOW_WIDTH; x++){
+        uint8_t LCDC = ReadMem(0xFF40);
+        
+        /* --- SECTION FOR BACKGROUND LAYER --- */
         /* It is important to look at SCY and SCX to map to world cordinates 
            in order to apply background scrolling. */
         uint8_t SCY = ReadMem(0xFF42);
         uint8_t SCX = ReadMem(0xFF43);
 
-        uint8_t LCDC = ReadMem(0xFF40);
 
         uint8_t world_x = SCX + x;
         uint8_t world_y = SCY + ppu->ly; 
@@ -253,16 +286,154 @@ void ppu_scanline(PPU *ppu){
         uint8_t BGP = ReadMem(0xFF47);
         uint8_t color = (BGP >> (color_number * 2)) & 0x03;
 
+
+        /* --- SECTION FOR WINDOW LAYER --- */
+        uint8_t WY = ReadMem(0xFF4A);
+        uint8_t WX = ReadMem(0xFF4B);
+        bool window_enabled = (LCDC & 0x20) != 0;
+
+        // check if the window is enabled and if the current pixel is visible
+        if(window_enabled && ppu->ly >= WY && x >= (WX - 7)){
+            uint8_t window_x = x - (WX - 7);
+            uint8_t window_y = ppu->ly - WY;
+            
+            tile_x  = window_x / 8;
+            tile_y  = window_y / 8;
+
+            /* Read the address with different LCDC bit, bit 6, 
+               the rest of calculation remains the same */
+            tile_map_addr = ((LCDC & 0b01000000) == 0 ? 0x9800 : 0x9C00);
+            tile_id_addr  = tile_map_addr + (tile_y * 32) + tile_x; 
+            tile_id       = memory[tile_id_addr];   
+
+            if((LCDC & 0x10) != 0){ // Use 0x8000 method (unsigned)
+                tile_data_addr = 0x8000;
+                tile_data_addr += tile_id * 16;
+            }
+            else{ // Use 0x8800 method (signed)
+                tile_data_addr = 0x9000;
+                tile_data_addr += ((int8_t)tile_id) * 16;
+            }
+
+            /* Every pixel is stored with 2 bits so in one byte there are 4 pixels. A row is 8 pixels so 2 bytes. */
+            tile_row_addr  = tile_data_addr + (window_y % 8) * 2; 
+
+            /* The data is stored in two consecutive bytes, the first byte stores the least significant bit of the pixels 
+            the second byte stores the most significant bit of the pixels
+            */
+            byte1 = memory[tile_row_addr];
+            byte2 = memory[tile_row_addr+1];
+
+            bit_index = 7 - (window_x % 8);
+
+            color_bit1 = (byte2 >> bit_index) & 1;
+            color_bit0 = (byte1 >> bit_index) & 1;
+
+            color_number = (color_bit1 << 1) | color_bit0;
+
+            /* Now based on the color number it is possible to get the right value from BG palette */
+            color = (BGP >> (color_number * 2)) & 0x03;
+        }
+
+
+        /* --- SECTION FOR SPRITES --- */
+
+        bool obj_enabled = (LCDC & 0x02) != 0;
+        if(obj_enabled){
+            bool is_double_height = (LCDC & 0x04) != 0;
+            for(size_t i = 0; i < ppu->visible_objects_counter; i++){
+                // casting to uint8_t makes easier the access to each byte
+                uint8_t *obj = (uint8_t*)&ppu->visible_objects[i]; 
+                // x position is in byte 1
+                if(x >= obj[1] - 8 && x < obj[1]) { // the object is under the current x pos
+                    
+                    if(is_double_height){ // in this case it is important to understand which tile to fetch
+                        if(ppu->ly - (obj[0] - 16) < 8){ // fetch upper tile
+                            tile_id = obj[2] & 0xFE;
+                        }
+                        else{ // fetch bottom tile
+                            tile_id = obj[2] | 0x01;
+                        }
+                    }
+                    else{
+                        tile_id = obj[2];
+                    }
+
+
+                    tile_data_addr = 0x8000 + tile_id * 16;
+
+                    uint8_t y_in_tile = (ppu->ly - (obj[0] - 16)) % 8;
+                    uint8_t x_in_tile = x - (obj[1] - 8);
+
+                    /* Every pixel is stored with 2 bits so in one byte there are 4 pixels. A row is 8 pixels so 2 bytes. */
+                    tile_row_addr  = tile_data_addr + (y_in_tile % 8) * 2; 
+
+                    /* The data is stored in two consecutive bytes, the first byte stores the least significant bit of the pixels 
+                    the second byte stores the most significant bit of the pixels
+                    */
+                    byte1 = memory[tile_row_addr];
+                    byte2 = memory[tile_row_addr+1];
+
+                    bit_index = 7 - (x_in_tile % 8);
+
+                    color_bit1 = (byte2 >> bit_index) & 1;
+                    color_bit0 = (byte1 >> bit_index) & 1;
+
+                    color_number = (color_bit1 << 1) | color_bit0;
+                    if(color_number == 0){
+                        continue;
+                    }
+
+                    /* Now based on the color number it is possible to get the right value from OBP0 palette */
+                    uint8_t palette;
+                    if((obj[3] & 0x10) == 0) palette = ReadMem(0xFF48); // OBP0
+                    else palette = ReadMem(0xFF49); // OBP1
+
+                    color = (palette >> (color_number * 2)) & 0x03;
+                    break;
+                }  
+            }
+        }
+
         process_frame_buffer(x, ppu->ly, color);
+    }
+
+}
+
+
+/* This function check all 40 sprites during OAM Scan mode in order to find the 10
+ * spirtes that overlaps the y coordinate of the current scanline. 
+ */
+void ppu_oam_scan(PPU *ppu){
+    ppu->visible_objects_counter = 0;
+    /* Each object is 4 bytes in memory so let's read the memory as uint32_t values */
+    uint32_t *obj_base_addr_ptr = (uint32_t *)&memory[0xFE00];
+    uint32_t *obj_end_addr_ptr  = (uint32_t *)&memory[0xFE9F];
+
+    uint8_t LCDC = memory[0xFF40];
+    bool is_double_height = (LCDC & 0x04) != 0;
+    uint8_t *obj;
+    for(uint32_t *i = obj_base_addr_ptr; i < obj_end_addr_ptr; i++){
+        // cast to an array of four entries
+        obj = (uint8_t *)i;
+        // first byte Y pos
+        uint8_t obj_height = is_double_height ? 16 : 8;
+        if(ppu->ly >= obj[0] - 16 && ppu->ly < obj[0] - 16 + obj_height){ // visible for this scanline
+            ppu->visible_objects[ppu->visible_objects_counter++] = *i;
+            if(ppu->visible_objects_counter == 10) return; // max 10 visible objects for scanline
+        }
+        
     }
 }
 
 /* This function performs a step of an amount of clock cycles in the 
-   PPU state machine. The purpose is to emulate correctly this behaviour 
-   after the CPU has exectuted an instruction that takes an amount of time 
+ * PPU state machine. The purpose is to emulate correctly this behaviour 
+ * after the CPU has exectuted an instruction that takes an amount of time 
 */
 void ppu_step(PPU *ppu, int cycles){
     ppu->cycle_counter += cycles;
+
+    uint8_t STAT   = memory[0xFF41];
 
     switch(ppu->mode){
         case MODE_2_OAM_SCAN:
@@ -275,6 +446,8 @@ void ppu_step(PPU *ppu, int cycles){
             if(ppu->cycle_counter >= 172){
                 ppu->cycle_counter -= 172;
                 ppu_set_mode(ppu, MODE_0_HBLANK);
+                // check if in STAT an interrupt for this event has to be requested
+                if((STAT & 0x08) != 0) memory[0xFF0F] |= 0x02; // request STAT interrupt
                 ppu_scanline(ppu);
             }
             break;
@@ -284,7 +457,7 @@ void ppu_step(PPU *ppu, int cycles){
                 ppu->ly++;
                 memory[0xFF44] = ppu->ly;
                 uint8_t LYC    = memory[0xFF45];
-                uint8_t STAT   = memory[0xFF41];
+                
 
                 if(ppu->ly == LYC){
                     // Set coincidence Flag (second bit in stat)
@@ -293,18 +466,20 @@ void ppu_step(PPU *ppu, int cycles){
                     // Check if the interrupt for this event is enabled (bit 6)
                     if((STAT & 0x40) != 0){
                         memory[0xFF0F] |= 0x02; // request STAT interrupt
-                    } else{
-                        memory[0xFF41] &= ~0x04;
                     }
+                } else{
+                        memory[0xFF41] &= ~0x04;
                 }
 
                 if (ppu->ly == 144) {
                     ppu_set_mode(ppu, MODE_1_VBLANK);
-                    
+                    // check if in STAT an interrupt for this event has to be requested
+                    if((STAT & 0x10) != 0) memory[0xFF0F] |= 0x02; // request STAT interrupt
                     // Request V-Blank interrupt
                     memory[0xFF0F] |= 0x1; // Interrupt flag
                 } else {
                     ppu_set_mode(ppu, MODE_2_OAM_SCAN);
+                    ppu_oam_scan(ppu);
                 }
             }
             break;
@@ -318,6 +493,9 @@ void ppu_step(PPU *ppu, int cycles){
                     ppu->ly = 0;
                     memory[0xFF44] = 0;
                     ppu_set_mode(ppu, MODE_2_OAM_SCAN);
+                    ppu_oam_scan(ppu);
+                    // check if in STAT an interrupt for this event has to be requested
+                    if((STAT & 0x20) != 0) memory[0xFF0F] |= 0x02; // request STAT interrupt
                 }
             }
             break;
@@ -480,7 +658,7 @@ int LD_r_r(CPU *cpu) {
         case 3: n = (uint8_t)(cpu->DE & 0xFF); break; // Register E
         case 4: n = (uint8_t)(cpu->HL >> 8);   break; // Register H
         case 5: n = (uint8_t)(cpu->HL & 0xFF); break; // Register L
-        case 6: n = ReadMem(cpu->HL);           break; // Value from address (HL)
+        case 6: n = ReadMem(cpu->HL);          break; // Value from address (HL)
         case 7: n = (uint8_t)(cpu->AF >> 8);   break; // Register A
     }
 
@@ -694,7 +872,7 @@ int SUB_A_r(CPU *cpu){
         case 0x93: n = cpu->DE & 0xFF;   break; // Register E
         case 0x94: n = cpu->HL >> 8;     break; // Register H
         case 0x95: n = cpu->HL & 0xFF;   break; // Register L
-        case 0x96: n = ReadMem(cpu->HL);  break; // Address (HL)
+        case 0x96: n = ReadMem(cpu->HL); break; // Address (HL)
         case 0x97: n = cpu->AF >> 8;     break; // Register A
     }
     
@@ -754,7 +932,7 @@ int SBC_A_r(CPU *cpu){
         case 0x9B: n = cpu->DE & 0xFF;   break; // Register E
         case 0x9C: n = cpu->HL >> 8;     break; // Register H
         case 0x9D: n = cpu->HL & 0xFF;   break; // Register L
-        case 0x9E: n = ReadMem(cpu->HL);  break; // Address (HL)
+        case 0x9E: n = ReadMem(cpu->HL); break; // Address (HL)
         case 0x9F: n = cpu->AF >> 8;     break; // Register A
     }
     
@@ -814,7 +992,7 @@ int AND_A_r(CPU *cpu){
         case 0xA3: n = cpu->DE & 0xFF;   break; // Register E
         case 0xA4: n = cpu->HL >> 8;     break; // Register H
         case 0xA5: n = cpu->HL & 0xFF;   break; // Register L
-        case 0xA6: n = ReadMem(cpu->HL);  break; // Address (HL)
+        case 0xA6: n = ReadMem(cpu->HL); break; // Address (HL)
         case 0xA7: n = cpu->AF >> 8;     break; // Register A
     }
     
@@ -2660,22 +2838,28 @@ void InitializeGameROM(char* romPath) {
 
 void process_input(SDL_Event *event){
     bool is_pressed = (event->type == SDL_KEYDOWN);
+    bool button_just_pressed = false;
+
     switch (event->key.keysym.sym) {
-        case SDLK_b:    joypad.start  = is_pressed; break;
-        case SDLK_v:    joypad.select = is_pressed; break;
-        case SDLK_m:    joypad.b      = is_pressed; break;
-        case SDLK_k:    joypad.a      = is_pressed; break;
-        case SDLK_s:    joypad.down   = is_pressed; break;
-        case SDLK_w:    joypad.up     = is_pressed; break;
-        case SDLK_a:    joypad.left   = is_pressed; break;
-        case SDLK_d:    joypad.right  = is_pressed; break;
+        case SDLK_b:    if(is_pressed && !joypad.start)  button_just_pressed = true; joypad.start  = is_pressed; break;
+        case SDLK_v:    if(is_pressed && !joypad.select) button_just_pressed = true; joypad.select = is_pressed; break;
+        case SDLK_m:    if(is_pressed && !joypad.b)      button_just_pressed = true; joypad.b      = is_pressed; break;
+        case SDLK_k:    if(is_pressed && !joypad.a)      button_just_pressed = true; joypad.a      = is_pressed; break;
+        case SDLK_s:    if(is_pressed && !joypad.down)   button_just_pressed = true; joypad.down   = is_pressed; break;
+        case SDLK_w:    if(is_pressed && !joypad.up)     button_just_pressed = true; joypad.up     = is_pressed; break;
+        case SDLK_a:    if(is_pressed && !joypad.left)   button_just_pressed = true; joypad.left   = is_pressed; break;
+        case SDLK_d:    if(is_pressed && !joypad.right)  button_just_pressed = true; joypad.right  = is_pressed; break;
+    }
+
+    if(button_just_pressed){ // Request joypad interrupt
+        memory[0xFF0F] |= 0x10;
     }
 }
 
 int main(int argc, char **argv){
     if(argc <= 1){
         fprintf(stderr, "[ERROR] Usage: ./gameboy <path-to-ROM>\n");
-        return 1;
+        argv[1] = "roms/DrMario.gb";
     }
 
 
@@ -2740,6 +2924,7 @@ int main(int argc, char **argv){
 
             ppu_step(&ppu, cycles_executed);
             timer_step(&timer, cycles_executed);
+            dma_step(cycles_executed);
         }
         
         SDL_UpdateTexture(texture, NULL, framebuffer, USER_WINDOW_WIDTH * sizeof(uint32_t));  // Update the texture with the new pixel data
