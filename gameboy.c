@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdlib.h>
 
 #include <SDL2/SDL.h>
 
@@ -41,6 +42,7 @@ typedef struct CPU {
 
     bool running;
     bool halted;
+    bool halt_bug;
     bool IME;
 } CPU;
 
@@ -122,6 +124,10 @@ uint8_t ReadMem(uint16_t addr){
         }
     }
 
+    #ifdef DEBUG_TEST_LOG
+        if(addr == 0xFF44) return 0x90;
+    #endif
+
     // Check for VRAM read restrictions
     //Check for VRAM read restrictions
     uint8_t LCDC = memory[0xFF40];
@@ -169,7 +175,11 @@ uint8_t ReadMem(uint16_t addr){
 /* This function fetches and returns a byte from memory at the address of
    the program counter and increments it. */
 uint8_t FetchByte(CPU *cpu){
-    return ReadMem(cpu->PC++);;
+    if(cpu->halt_bug){
+        cpu->halt_bug = false;
+        return ReadMem(cpu->PC);
+    }
+    return ReadMem(cpu->PC++);
 }
 
 /* This function fetches and return a 16-bit word from memory at the address of
@@ -230,12 +240,16 @@ void WriteMem(uint16_t addr, uint8_t data){
 /* This function gets data from VRAM and sends it to LCD framebuffer at the end 
    of the execution of this function a new line is visible on the screen. */
 void ppu_scanline(PPU *ppu){
+    uint8_t w_color_number   = 0;
+    uint8_t bg_color_number  = 0;
+    uint8_t obj_color_number = 0;
+
     // cycle for an entire line
     for(uint8_t x = 0; x < WINDOW_WIDTH; x++){
         uint8_t LCDC = ReadMem(0xFF40);
         
         /* --- SECTION FOR BACKGROUND LAYER --- */
-        /* It is important to look at SCY and SCX to map to world cordinates 
+        /* It is important to look at SCY and SCX to map to world coordinates 
            in order to apply background scrolling. */
         uint8_t SCY = ReadMem(0xFF42);
         uint8_t SCX = ReadMem(0xFF43);
@@ -280,11 +294,11 @@ void ppu_scanline(PPU *ppu){
         uint8_t color_bit1 = (byte2 >> bit_index) & 1;
         uint8_t color_bit0 = (byte1 >> bit_index) & 1;
 
-        uint8_t color_number = (color_bit1 << 1) | color_bit0;
+        bg_color_number = (color_bit1 << 1) | color_bit0;
 
         /* Now based on the color number it is possible to get the right value from BG palette */
         uint8_t BGP = ReadMem(0xFF47);
-        uint8_t color = (BGP >> (color_number * 2)) & 0x03;
+        uint8_t color = (BGP >> (bg_color_number * 2)) & 0x03;
 
 
         /* --- SECTION FOR WINDOW LAYER --- */
@@ -329,10 +343,10 @@ void ppu_scanline(PPU *ppu){
             color_bit1 = (byte2 >> bit_index) & 1;
             color_bit0 = (byte1 >> bit_index) & 1;
 
-            color_number = (color_bit1 << 1) | color_bit0;
+            w_color_number = (color_bit1 << 1) | color_bit0;
 
             /* Now based on the color number it is possible to get the right value from BG palette */
-            color = (BGP >> (color_number * 2)) & 0x03;
+            color = (BGP >> (w_color_number * 2)) & 0x03;
         }
 
 
@@ -362,8 +376,18 @@ void ppu_scanline(PPU *ppu){
 
                     tile_data_addr = 0x8000 + tile_id * 16;
 
+                    // check if the tile is horizontally or vertically mirrored
+                    bool x_flip = (obj[3] & 0x20) != 0;
+                    bool y_flip = (obj[3] & 0x40) != 0;
+
                     uint8_t y_in_tile = (ppu->ly - (obj[0] - 16)) % 8;
-                    uint8_t x_in_tile = x - (obj[1] - 8);
+                    uint8_t x_in_tile = x - (obj[1] - 8); 
+
+                    if(x_flip) x_in_tile = 7 - x_in_tile;       
+                    if(y_flip) y_in_tile = 7 - y_in_tile;
+
+                    // check priority 0 = high, 1 = low
+                    bool priority = (obj[3] & 0x80) == 0; 
 
                     /* Every pixel is stored with 2 bits so in one byte there are 4 pixels. A row is 8 pixels so 2 bytes. */
                     tile_row_addr  = tile_data_addr + (y_in_tile % 8) * 2; 
@@ -379,8 +403,14 @@ void ppu_scanline(PPU *ppu){
                     color_bit1 = (byte2 >> bit_index) & 1;
                     color_bit0 = (byte1 >> bit_index) & 1;
 
-                    color_number = (color_bit1 << 1) | color_bit0;
-                    if(color_number == 0){
+                    // Determine the final underlying color before checking sprites
+                    uint8_t underlying_color_number = bg_color_number;
+                    if (window_enabled && ppu->ly >= WY && x >= (WX - 7)) {
+                        underlying_color_number = w_color_number;
+                    }
+
+                    obj_color_number = (color_bit1 << 1) | color_bit0;
+                    if (obj_color_number == 0 || (!priority && underlying_color_number != 0)) {
                         continue;
                     }
 
@@ -389,7 +419,7 @@ void ppu_scanline(PPU *ppu){
                     if((obj[3] & 0x10) == 0) palette = ReadMem(0xFF48); // OBP0
                     else palette = ReadMem(0xFF49); // OBP1
 
-                    color = (palette >> (color_number * 2)) & 0x03;
+                    color = (palette >> (obj_color_number * 2)) & 0x03;
                     break;
                 }  
             }
@@ -400,6 +430,12 @@ void ppu_scanline(PPU *ppu){
 
 }
 
+/* Comparator used by qsort in order to sort sprites for x coordinate value */
+int sprite_comparator(const void *a, const void *b){
+    uint8_t *_a = (uint8_t*)a;
+    uint8_t *_b = (uint8_t*)b;
+    return _a[1] - _b[1];
+}
 
 /* This function check all 40 sprites during OAM Scan mode in order to find the 10
  * spirtes that overlaps the y coordinate of the current scanline. 
@@ -420,10 +456,13 @@ void ppu_oam_scan(PPU *ppu){
         uint8_t obj_height = is_double_height ? 16 : 8;
         if(ppu->ly >= obj[0] - 16 && ppu->ly < obj[0] - 16 + obj_height){ // visible for this scanline
             ppu->visible_objects[ppu->visible_objects_counter++] = *i;
-            if(ppu->visible_objects_counter == 10) return; // max 10 visible objects for scanline
+            if(ppu->visible_objects_counter == 10) break; // max 10 visible objects for scanline
         }
         
     }
+
+    // TODO maybe change with counting sort
+    qsort(ppu->visible_objects, ppu->visible_objects_counter, sizeof(uint32_t), sprite_comparator); 
 }
 
 /* This function performs a step of an amount of clock cycles in the 
@@ -462,6 +501,7 @@ void ppu_step(PPU *ppu, int cycles){
                 if(ppu->ly == LYC){
                     // Set coincidence Flag (second bit in stat)
                     memory[0xFF41] |= 0x04;
+                    STAT = memory[0xFF41];
                     
                     // Check if the interrupt for this event is enabled (bit 6)
                     if((STAT & 0x40) != 0){
@@ -469,6 +509,7 @@ void ppu_step(PPU *ppu, int cycles){
                     }
                 } else{
                         memory[0xFF41] &= ~0x04;
+                        STAT = memory[0xFF41];
                 }
 
                 if (ppu->ly == 144) {
@@ -480,6 +521,8 @@ void ppu_step(PPU *ppu, int cycles){
                 } else {
                     ppu_set_mode(ppu, MODE_2_OAM_SCAN);
                     ppu_oam_scan(ppu);
+                    // check if in STAT an interrupt for this event has to be requested
+                    if((STAT & 0x20) != 0) memory[0xFF0F] |= 0x02; // request STAT interrupt
                 }
             }
             break;
@@ -523,19 +566,21 @@ void timer_step(TIMER *timer, int cycles){
             case 0b10: tima_inc_rate = 65536;  break;
             case 0b11: tima_inc_rate = 16384;  break;
         }
+        uint32_t threshold = CLOCK_FREQ_HZ / tima_inc_rate;
 
-        if(timer->timer_cycle_counter >= (CLOCK_FREQ_HZ / tima_inc_rate)){
-            size_t increment = timer->timer_cycle_counter / (CLOCK_FREQ_HZ / tima_inc_rate);
-            size_t result = (uint16_t)memory[0xFF05] + increment;
-            if(result > 0xFF){ // TIMA overflows so resets it to TMA value
+        while (timer->timer_cycle_counter >= threshold) {
+            timer->timer_cycle_counter -= threshold;
+
+            // Increment TIMA by exactly 1
+            memory[0xFF05]++;
+
+            // If TIMA just overflowed (went from 255 to 0)
+            if (memory[0xFF05] == 0) {
+                // Load the value from TMA
                 memory[0xFF05] = memory[0xFF06];
-                // request interrupt
+                // Request a timer interrupt
                 memory[0xFF0F] |= 0x04;
             }
-            else{
-                memory[0xFF05] += increment;
-            }
-            timer->timer_cycle_counter %= (CLOCK_FREQ_HZ / tima_inc_rate);
         }
     }
 }
@@ -711,17 +756,17 @@ int LD_r_d8(CPU *cpu) {
     return opcode == 0x36 ? 12 : 8;
 }
 
-/* This reads from IO-port n into A register */
+/* This writes to IO-port n from A register */
 int LD_a8_A(CPU *cpu){
     uint8_t n = FetchByte(cpu);
     WriteMem(0xFF00+n, (uint8_t)(cpu->AF >> 8));
     return 12;
 }
 
-/* This writes to IO-port n from A register */
+/* This reads from IO-port n into A register */
 int LD_A_a8(CPU *cpu){
     uint8_t n = FetchByte(cpu);
-    cpu->AF = (cpu->AF & 0x00FF) | ((uint16_t)(ReadMem(0xFF00 + n)) << 8);
+    cpu->AF = ((uint16_t)(ReadMem(0xFF00 + n)) << 8) | (cpu->AF & 0x00F0);
     return 12;
 }
 
@@ -1082,14 +1127,14 @@ int XOR_A_r(CPU *cpu){
         case 0xAB: n = cpu->DE & 0xFF;   break; // Register E
         case 0xAC: n = cpu->HL >> 8;     break; // Register H
         case 0xAD: n = cpu->HL & 0xFF;   break; // Register L
-        case 0xAE: n = ReadMem(cpu->HL);  break; // Address (HL)
+        case 0xAE: n = ReadMem(cpu->HL); break; // Address (HL)
         case 0xAF: n = cpu->AF >> 8;     break; // Register A
     }
     
     uint16_t result = a ^ n;
 
     cpu->AF &= 0xFF00; // Flags reset
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
    cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
@@ -1104,7 +1149,7 @@ int XOR_A_d8(CPU *cpu){
     uint16_t result = a ^ n;
 
     cpu->AF &= 0xFF00; // Flags reset
-    if(result == 0) cpu->AF |= 0x80; // Zero flag
+    if((result & 0xFF) == 0) cpu->AF |= 0x80; // Zero flag
     else cpu->AF &= ~0x80;
 
     cpu->AF = ((result & 0xFF) << 8) | (cpu->AF & 0x00F0);
@@ -1253,45 +1298,62 @@ int DEC_r(CPU *cpu){
 
 /* Corrects the value into A for Binary Coded Decimal after an addition or a subtraction */
 int DAA(CPU *cpu) {
-    uint8_t a = (uint8_t)(cpu->AF >> 8);
-    uint16_t result = a;
-    
-    bool n_flag = (cpu->AF & 0x40) != 0;
-    bool h_flag = (cpu->AF & 0x20) != 0;
-    bool c_flag = (cpu->AF & 0x10) != 0;
+    uint8_t a = cpu->AF >> 8;  // High byte of AF is A
+    bool n_flag = (cpu->AF & 0x40) != 0; // N
+    bool h_flag = (cpu->AF & 0x20) != 0; // H
+    bool c_flag = (cpu->AF & 0x10) != 0; // C
 
-    if (n_flag) { // Last operation was subtraction
-        if (h_flag) {
-            result = (result - 0x06) & 0xFF;
+    uint8_t correction = 0;
+
+    if (!n_flag) { // After addition
+        if (c_flag || a > 0x99) {
+            correction |= 0x60;
+            c_flag = true;
         }
+        if (h_flag || (a & 0x0F) > 0x09) {
+            correction |= 0x06;
+        }
+        a += correction;
+    } else { // After subtraction
         if (c_flag) {
-            result = (result - 0x60) & 0xFF;
+            correction |= 0x60;
         }
-    } else { // Last operation was addition
-        if (h_flag || (a & 0x0F) > 9) {
-            result += 0x06;
+        if (h_flag) {
+            correction |= 0x06;
         }
-        if (c_flag || result > 0x99) {
-            result += 0x60;
-            cpu->AF |= 0x10; // Set carry flag
-        }
+        a -= correction;
     }
 
-    // Set zero flag
-    if ((result & 0xFF) == 0) {
+    // Update Z flag
+    if (a == 0) {
         cpu->AF |= 0x80;
     } else {
         cpu->AF &= ~0x80;
     }
 
-    // Clear half-carry flag (always cleared after DAA)
+    // Update C flag
+    if (c_flag) {
+        cpu->AF |= 0x10;
+    } else {
+        cpu->AF &= ~0x10;
+    }
+
+    // Clear H flag
     cpu->AF &= ~0x20;
-    
-    // Update A register, preserve flags
-    cpu->AF = (cpu->AF & 0x00FF) | ((result & 0xFF) << 8);
+
+    // Preserve N flag
+    if (n_flag) {
+        cpu->AF |= 0x40;
+    } else {
+        cpu->AF &= ~0x40;
+    }
+
+    // Store result back to A
+    cpu->AF = (cpu->AF & 0x00FF) | (a << 8);
 
     return 4;
 }
+
 
 /* Complements the accumulator and sets H and N flags */
 int CPL(CPU *cpu){
@@ -1362,8 +1424,8 @@ int LD_HL_SPs8(CPU *cpu){
 
     cpu->AF = 0x00; // Clear Z, N, H, C
 
-    if( ((cpu->SP & 0x0F) + (n & 0x0F)) > 0x0F ) cpu->AF |= 0x20; // Half Carry
-    if( ((cpu->SP & 0xFF) + (n & 0xFF)) > 0xFF ) cpu->AF |= 0x10; // Carry
+    if( ((cpu->SP & 0x0F) + ((uint8_t)n & 0x0F)) > 0x0F ) cpu->AF |= 0x20; // Half Carry
+    if( ((cpu->SP & 0xFF) + ((uint8_t)n & 0xFF)) > 0xFF ) cpu->AF |= 0x10; // Carry
 
     cpu->HL = result;
     return 12;
@@ -1463,7 +1525,7 @@ int ADD_HL_rr(CPU *cpu){
         case 0x29: n = cpu->HL; break;
         case 0x39: n = cpu->SP; break; 
     }
-    uint16_t result = cpu->HL + n;
+    uint32_t result = cpu->HL + n;
 
     cpu->AF &= ~0x40; // Clear the N flag
 
@@ -1485,8 +1547,8 @@ int ADD_SP_s8(CPU *cpu){
 
    cpu->AF = 0x00; // Clear Z, N, H, C
 
-    if( ((cpu->SP & 0x0F) + (n & 0x0F)) > 0x0F ) cpu->AF |= 0x20; // Half Carry
-    if( ((cpu->SP & 0xFF) + (n & 0xFF)) > 0xFF ) cpu->AF |= 0x10; // Carry
+    if( ((cpu->SP & 0x0F) + ((uint8_t)n & 0x0F)) > 0x0F ) cpu->AF |= 0x20; // Half Carry
+    if( ((cpu->SP & 0xFF) + ((uint8_t)n & 0xFF)) > 0xFF ) cpu->AF |= 0x10; // Carry
     
     cpu->SP = result;
     return 16;
@@ -1766,11 +1828,12 @@ int NOP(CPU *cpu){ return 4; }
 /* This performs the HALT instruction */
 int HALT(CPU *cpu){ 
     // HALT bug
-   /* if(!cpu->IME ){
-        uint8_t IE = memory[0xFF0F];
-        uint8_t IF = memory[0xFFFF];
-        if((IE & IF) != 0) cpu->PC--;
-    }*/
+   if(!cpu->IME ){
+        uint8_t IF = memory[0xFF0F];
+        uint8_t IE = memory[0xFFFF];
+        if((IE & IF) != 0) cpu->halt_bug = true;
+        return 4;
+    }
     cpu->halted = true;
     return 4;    
 }
@@ -1813,21 +1876,28 @@ int handle_cb_prefix(CPU *cpu){
 
 /* Rotates the bits of the A register one position to the left in a circular fashion */
 int RLCA(CPU *cpu){
-    cpu->AF &= 0xFF00; // Flags reset
-    cpu->AF |= (cpu->AF & 0x8000) >> 11; // New carry stored based on most sign. bit of A
+    uint8_t old_a = cpu->AF >> 8;
+    bool is_bit_7 = (old_a & 0x80) != 0; // bit 7 set or not
     
-    uint16_t new_a = ((cpu->AF << 1) & 0xFF00) >> 8; // shift A by one
-    new_a |= (cpu->AF & 0x8000) >> 15;  // add the carry as least sign. bit
+    cpu->AF &= 0x0000; // A and Flags reset
 
-    cpu->AF = (new_a << 8) | (cpu->AF & 0x00FF); 
+    uint8_t new_a = old_a << 1; // shift A by one
+    if(is_bit_7){
+        new_a   |= 0x01; // add the bit 7 to bit 0
+        cpu->AF |= 0x10; // Set carry flag 
+    } else{
+        cpu->AF &= ~0x10; // Reset carry flag
+    }
+    
+    cpu->AF = ((uint16_t)(new_a) << 8) | (cpu->AF & 0x00F0); 
     return 4;
 }
 
 /* Rotates the bits of the A register one position to the left through carry bit */
 int RLA(CPU *cpu){
-    cpu->AF &= 0xFF10; // Flags reset avoiding carry
-
     bool was_carry_set = (cpu->AF & 0x10) != 0;
+
+    cpu->AF &= 0xFF00; // Flags reset
     cpu->AF |= (cpu->AF & 0x8000) >> 11; // New carry stored based on most sign. bit of A
     uint16_t new_a = ((cpu->AF << 1) & 0xFF00) >> 8; // shift A by one
 
@@ -1841,21 +1911,27 @@ int RLA(CPU *cpu){
 
 /* Rotates the bits of the A register one position to the right in a circular fashion */
 int RRCA(CPU *cpu){
-    cpu->AF &= 0xFF00; // Flags reset
-    cpu->AF |= (cpu->AF & 0x0100) >> 4; // New carry stored based on least sign. bit of A
+    uint8_t old_a = cpu->AF >> 8;
+    bool is_bit_0 = (old_a & 0x01) != 0; // bit 0 set or not
     
-    uint16_t new_a = ((cpu->AF >> 1) & 0xFF00) >> 8; // shift A by one
-    new_a |= (cpu->AF & 0x0100) >> 4;  // add the carry as most sign. bit
+    cpu->AF &= 0x0000; // A and Flags reset
+    
+    uint8_t new_a = (old_a >> 1); // shift A by one
+    if(is_bit_0){
+        new_a   |= 0x80;  // add the lsb of A as most sign. bit of new A
+        cpu->AF |= 0x10;  // Set carry flag
+    } else {
+        cpu->AF &= ~0x10; // Reset carry flag
+    }
 
-    cpu->AF = (new_a << 8) | (cpu->AF & 0x00FF); 
+    cpu->AF = ((uint16_t)(new_a) << 8) | (cpu->AF & 0x00F0); 
     return 4;
 }
 
 /* Rotates the bits of the A register one position to the right through carry bit */
 int RRA(CPU *cpu){
-    cpu->AF &= 0xFF10; // Flags reset avoiding carry
-
     bool was_carry_set = (cpu->AF & 0x10) != 0;
+    cpu->AF &= 0xFF00; // Flags reset
     cpu->AF |= (cpu->AF & 0x0100) >> 4; // New carry stored based on least sign. bit of A
     uint16_t new_a = ((cpu->AF >> 1) & 0xFF00) >> 8; // shift A by one
 
@@ -2015,7 +2091,7 @@ int RR_r(CPU *cpu){
         case 3: value = (uint8_t)(cpu->DE & 0xFF); break; // E
         case 4: value = (uint8_t)(cpu->HL >> 8);   break; // H
         case 5: value = (uint8_t)(cpu->HL & 0xFF); break; // L
-        case 6: value = ReadMem(cpu->HL);           break; // (HL)
+        case 6: value = ReadMem(cpu->HL);          break; // (HL)
         case 7: value = (uint8_t)(cpu->AF >> 8);   break; // A
     }
 
@@ -2856,10 +2932,40 @@ void process_input(SDL_Event *event){
     }
 }
 
+#ifdef DEBUG_TEST_LOG
+void InitializeLogger(FILE **logger){
+    *logger = fopen("gameboy.log", "w");
+    if(*logger == NULL){
+        exit(1);
+    }
+    printf("[INFO] Log file initialized correctly\n");
+}
+
+void EndLogger(FILE **logger){
+    fclose(*logger);
+}
+
+void logEmulatorSatus(FILE **logger, CPU *cpu){
+    if(*logger == NULL){
+        printf("logger is NULL\n");
+        exit(1);
+    }
+    uint8_t a =  cpu->AF >> 8;
+    uint8_t f = (cpu->AF & 0xFF);
+    uint8_t b =  cpu->BC >> 8;
+    uint8_t c = (cpu->BC & 0xFF);
+    uint8_t d =  cpu->DE >> 8;
+    uint8_t e = (cpu->DE & 0xFF);
+    uint8_t h =  cpu->HL >> 8;
+    uint8_t l = (cpu->HL & 0xFF);
+    fprintf(*logger, "A: %02X F: %02X B: %02X C: %02X D: %02X E: %02X H: %02X L: %02X SP: %04X PC: 00:%04X (%02X %02X %02X %02X)\n", a, f, b, c, d, e, h, l, cpu->SP, cpu->PC, ReadMem(cpu->PC), ReadMem(cpu->PC+1), ReadMem(cpu->PC+2), ReadMem(cpu->PC+3));
+}
+#endif
+
 int main(int argc, char **argv){
     if(argc <= 1){
         fprintf(stderr, "[ERROR] Usage: ./gameboy <path-to-ROM>\n");
-        argv[1] = "roms/DrMario.gb";
+        argv[1] = "roms/prova.gb";
     }
 
 
@@ -2870,7 +2976,13 @@ int main(int argc, char **argv){
     InitializePowerOnState(&cpu, &ppu);
     InitializeBootROM();
     InitializeGameROM(argv[1]);
+
+    #ifdef DEBUG_TEST_LOG
+        FILE *logger = NULL;
+        InitializeLogger(&logger);
+    #endif
     //create_dummy_header();
+    //boot_rom_enabled = false;
 
     print_cpu_state(&cpu);
 
@@ -2896,18 +3008,18 @@ int main(int argc, char **argv){
         int cycles_this_frame = 0;
         while (cycles_this_frame < CYCLES_PER_FRAME && cpu.running){
             while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                cpu.running = 0;
+                if (event.type == SDL_QUIT) {
+                    cpu.running = 0;
+                }
+                if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_q) {
+                    printf("=== DEBUG INFO ===\n");
+                    print_cpu_state(&cpu);
+                    printf("PPU: LY=%d, Mode=%d, Cycles=%zu\n", ppu.ly, ppu.mode, ppu.cycle_counter);
+                    printf("LCDC=0x%02X, STAT=0x%02X, BGP=0x%02X\n", 
+                        memory[0xFF40], memory[0xFF41], memory[0xFF47]);
+                }
+                process_input(&event);
             }
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_q) {
-                printf("=== DEBUG INFO ===\n");
-                print_cpu_state(&cpu);
-                printf("PPU: LY=%d, Mode=%d, Cycles=%zu\n", ppu.ly, ppu.mode, ppu.cycle_counter);
-                printf("LCDC=0x%02X, STAT=0x%02X, BGP=0x%02X\n", 
-                       memory[0xFF40], memory[0xFF41], memory[0xFF47]);
-            }
-            process_input(&event);
-        }
             int cycles_executed = 0;
 
             // First, check if an interrupt needs to be serviced.
@@ -2916,7 +3028,10 @@ int main(int argc, char **argv){
             if (cpu.halted) {
                 cycles_executed += 4;
             } else {
-                uint8_t opcode = FetchByte(&cpu);        
+                #ifdef DEBUG_TEST_LOG
+                    if(!boot_rom_enabled) logEmulatorSatus(&logger, &cpu);
+                #endif
+                uint8_t opcode = FetchByte(&cpu); 
                 cycles_executed = instruction_table[opcode](&cpu);
             }
 
@@ -2950,6 +3065,10 @@ int main(int argc, char **argv){
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
+
+    #ifdef DEBUG_TEST_LOG
+        EndLogger(&logger);
+    #endif
 
     return 0;
 }
