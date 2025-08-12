@@ -1,13 +1,23 @@
-CFLAGS= -Wall -I/opt/homebrew/include/ -D_THREAD_SAFE
-CFLAGS_DEBUG= -Wall -g -I/opt/homebrew/include/ -D_THREAD_SAFE -DDEBUG_TEST_LOG
+GLFLAG=-framework OpenGL
 
-LIBS = -L/opt/homebrew/lib -lSDL2
+CFLAGS= -Wall -I/opt/homebrew/include/ -D_THREAD_SAFE 
+CFLAGS_DEBUG= -Wall -g -I/opt/homebrew/include/ -D_THREAD_SAFE -DDEBUG_TEST_LOG 
 
+LIBS = -L/opt/homebrew/lib -lSDL2 $(GLFLAG)
+
+CFILES = src/gui/microui.c \
+         src/gui/renderer.c \
+         src/hardware/cpu.c \
+         src/hardware/memory.c \
+         src/hardware/ppu.c \
+         src/hardware/timer.c \
+         src/hardware/joypad.c \
+         src/gameboy.c
 all: 
-	$(CC) $(CFLAGS_DEBUG) gameboy.c -o gameboy $(LIBS)
+	$(CC) $(CFLAGS_DEBUG) $(CFILES) -o gameboy $(LIBS)
 
 release: 
-	$(CC) $(CFLAGS) gameboy.c -o gameboy $(LIBS) -O3
+	$(CC) $(CFLAGS) $(CFILES) -o gameboy $(LIBS) -O3
 
 test: 
-	$(CC) $(CFLAGS_DEBUG) gameboy.c -o gameboy $(LIBS)
+	$(CC) $(CFLAGS_DEBUG) $(CFILES) -o gameboy $(LIBS)
