@@ -313,7 +313,7 @@ static void process_frame(mu_Context *ctx) {
 int main(int argc, char **argv){
     if(argc <= 1){
         fprintf(stderr, "[ERROR] Usage: ./gameboy <path-to-ROM>\n");
-        argv[1] = "tests/gb-test-roms/mem_timing/individual/01-read_timing.gb";
+        exit(1);
     }
     PPU ppu = {0};
     ppu.process_frame_buffer = process_frame_buffer;
@@ -326,8 +326,6 @@ int main(int argc, char **argv){
         FILE *logger = NULL;
         InitializeLogger(&logger);
     #endif
-    //create_dummy_header();
-    //boot_rom_enabled = false;
 
     struct timespec start_time, end_time;
     long sleep_duration_ns;
