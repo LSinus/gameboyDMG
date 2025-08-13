@@ -1,0 +1,8 @@
+.vscode
+gameboy.dSYM
+tests
+roms
+cpu_instrs.gb
+gameboy
+gameboy.log
+.DS_Store
