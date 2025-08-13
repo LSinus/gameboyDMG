@@ -17,8 +17,11 @@ CFILES = src/gui/microui.c \
 all: 
 	$(CC) $(CFLAGS_DEBUG) $(CFILES) -o gameboy $(LIBS)
 
-release: 
+release:
 	$(CC) $(CFLAGS) $(CFILES) -o gameboy $(LIBS) -O3
 
 test: 
 	$(CC) $(CFLAGS_DEBUG) $(CFILES) -o gameboy $(LIBS)
+
+debugger:
+	$(CC) $(CFLAGS) $(CFILES) -o gameboy $(LIBS) -O3 -DDEBUGGER_MODE

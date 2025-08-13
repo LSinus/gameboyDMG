@@ -1,4 +1,5 @@
 /* Gameboy emulator by Leonardo Sinibaldi Started 19th July 2025. */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -20,6 +21,8 @@
 #define FRAME_RATE_HZ 59.7
 #define CYCLES_PER_FRAME (CLOCK_FREQ_HZ / FRAME_RATE_HZ)
 #define NANOSECONDS_PER_FRAME (1000000000L / FRAME_RATE_HZ)
+
+
 
 uint32_t framebuffer[USER_WINDOW_HEIGHT][USER_WINDOW_WIDTH] = {0};
 
@@ -172,6 +175,8 @@ void InitializeGameROM(char* romPath) {
 }
 
 void process_input(SDL_Event *event){
+    if(event->type == SDL_QUIT) exit(EXIT_SUCCESS);
+
     bool is_pressed = (event->type == SDL_KEYDOWN);
     bool button_just_pressed = false;
 
@@ -232,83 +237,83 @@ void logEmulatorSatus(FILE **logger, CPU *cpu){
 
 static CPU cpu = {0};
 
-/* ---- MICROUI STUFF ---- */
-static int text_width(mu_Font font, const char *text, int len) {
-  if (len == -1) { len = strlen(text); }
-  return r_get_text_width(text, len);
-}
+#ifdef DEBUGGER_MODE
+    /* ---- MICROUI STUFF ---- */
+    static int text_width(mu_Font font, const char *text, int len) {
+    if (len == -1) { len = strlen(text); }
+    return r_get_text_width(text, len);
+    }
 
-static int text_height(mu_Font font) {
-  return r_get_text_height();
-}
-mu_Context ctx = {0};
-static float bg[3] = { 90, 95, 100 };
-static char buffer[128] = {0};
+    static int text_height(mu_Font font) {
+    return r_get_text_height();
+    }
+    mu_Context ctx = {0};
+    static float bg[3] = { 90, 95, 100 };
+    static char buffer[128] = {0};
 
-static void test_window(mu_Context *ctx) {
-  /* do window */
-  if (mu_begin_window(ctx, "Demo Window", mu_rect(40, 40, 300, 450))) {
-    mu_Container *win = mu_get_current_container(ctx);
-    win->rect.w = mu_max(win->rect.w, 500);
-    win->rect.h = mu_max(win->rect.h, 300);
-    mu_layout_row(ctx, 2, (int[]) { 200, -1}, 300);
+    static void test_window(mu_Context *ctx) {
+    /* do window */
+    if (mu_begin_window(ctx, "Demo Window", mu_rect(40, 40, 300, 450))) {
+        mu_Container *win = mu_get_current_container(ctx);
+        win->rect.w = mu_max(win->rect.w, 500);
+        win->rect.h = mu_max(win->rect.h, 300);
+        mu_layout_row(ctx, 2, (int[]) { 200, -1}, 300);
 
-    mu_layout_begin_column(ctx);
-    /* background color sliders */
-    if (mu_header_ex(ctx, "Background Color", MU_OPT_EXPANDED)) {
-        mu_layout_row(ctx, 2, (int[]) { -78, -1 }, 74);
-        /* sliders */
         mu_layout_begin_column(ctx);
-        mu_layout_row(ctx, 2, (int[]) { 46, -1 }, 0);
-        mu_label(ctx, "Red:");   mu_slider(ctx, &bg[0], 0, 255);
-        mu_label(ctx, "Green:"); mu_slider(ctx, &bg[1], 0, 255);
-        mu_label(ctx, "Blue:");  mu_slider(ctx, &bg[2], 0, 255);
-        mu_layout_end_column(ctx);
-        /* color preview */
-        mu_Rect r = mu_layout_next(ctx); 
-        mu_draw_rect(ctx, r, mu_color(bg[0], bg[1], bg[2], 255));
-        char buf[32];
-        sprintf(buf, "#%02X%02X%02X", (int) bg[0], (int) bg[1], (int) bg[2]);
-        mu_draw_control_text(ctx, buf, r, MU_COLOR_TEXT, MU_OPT_ALIGNCENTER);
+        /* background color sliders */
+        if (mu_header_ex(ctx, "Background Color", MU_OPT_EXPANDED)) {
+            mu_layout_row(ctx, 2, (int[]) { -78, -1 }, 74);
+            /* sliders */
+            mu_layout_begin_column(ctx);
+            mu_layout_row(ctx, 2, (int[]) { 46, -1 }, 0);
+            mu_label(ctx, "Red:");   mu_slider(ctx, &bg[0], 0, 255);
+            mu_label(ctx, "Green:"); mu_slider(ctx, &bg[1], 0, 255);
+            mu_label(ctx, "Blue:");  mu_slider(ctx, &bg[2], 0, 255);
+            mu_layout_end_column(ctx);
+            /* color preview */
+            mu_Rect r = mu_layout_next(ctx); 
+            mu_draw_rect(ctx, r, mu_color(bg[0], bg[1], bg[2], 255));
+            char buf[32];
+            sprintf(buf, "#%02X%02X%02X", (int) bg[0], (int) bg[1], (int) bg[2]);
+            mu_draw_control_text(ctx, buf, r, MU_COLOR_TEXT, MU_OPT_ALIGNCENTER);
 
-        mu_begin_panel(ctx, "CPU status");
+            mu_begin_panel(ctx, "CPU status");
+            
+            mu_Container *panel = mu_get_current_container(ctx);
+            mu_text(ctx, buffer);
+            mu_end_panel(ctx);
+            if(mu_button(ctx, "GetStatus")){
+                GetEmulatorStatus(buffer, &cpu);
+            }
         
-        mu_Container *panel = mu_get_current_container(ctx);
-        mu_text(ctx, buffer);
-        mu_end_panel(ctx);
-        if(mu_button(ctx, "GetStatus")){
-            GetEmulatorStatus(buffer, &cpu);
         }
-       
+        mu_layout_end_column(ctx);
+
+        mu_layout_begin_column(ctx);
+        if (mu_header_ex(ctx, "Frame", MU_OPT_EXPANDED)) {
+            mu_Rect r = mu_layout_next(ctx); 
+            mu_Rect t = mu_rect(r.x, r.y, 200, 100);
+            mu_draw_rect(ctx, t, mu_color(bg[0], bg[1], bg[2], 255));
+        }
+        mu_layout_end_column(ctx);
+
+        mu_end_window(ctx);
     }
-    mu_layout_end_column(ctx);
 
-    mu_layout_begin_column(ctx);
-    if (mu_header_ex(ctx, "Frame", MU_OPT_EXPANDED)) {
-        mu_Rect r = mu_layout_next(ctx); 
-        mu_Rect t = mu_rect(r.x, r.y, 200, 100);
-        mu_draw_rect(ctx, t, mu_color(bg[0], bg[1], bg[2], 255));
+    if (mu_begin_window(ctx, "Gameboy Window", mu_rect(200, 40, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT))) {
+        mu_Container *win = mu_get_current_container(ctx);
+        mu_Rect r = mu_rect(win->rect.x,win->rect.y, win->rect.w, win->rect.h);
+        mu_draw_image(ctx, r, framebuffer);
+        mu_end_window(ctx);
     }
-    mu_layout_end_column(ctx);
+    }
 
-    mu_end_window(ctx);
-  }
-
-  if (mu_begin_window(ctx, "Gameboy Window", mu_rect(200, 40, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT))) {
-    mu_Container *win = mu_get_current_container(ctx);
-    mu_Rect r = mu_rect(win->rect.x,win->rect.y, win->rect.w, win->rect.h);
-    mu_draw_image(ctx, r, framebuffer);
-    mu_end_window(ctx);
-  }
-}
-
-static void process_frame(mu_Context *ctx) {
-    mu_begin(ctx);
-    test_window(ctx);
-    mu_end(ctx);
-}
-
-
+    static void process_frame(mu_Context *ctx) {
+        mu_begin(ctx);
+        test_window(ctx);
+        mu_end(ctx);
+    }
+#endif
 
 int main(int argc, char **argv){
     if(argc <= 1){
@@ -329,11 +334,16 @@ int main(int argc, char **argv){
 
     struct timespec start_time, end_time;
     long sleep_duration_ns;
+    
+    #ifdef DEBUGGER_MODE
+        r_init("Gameboy Debugger", USER_WINDOW_WIDTH*2, USER_WINDOW_HEIGHT+200,  "src/gui/fonts/DejaVuSans.ttf");
+        mu_init(&ctx);
+        ctx.text_width = text_width;
+        ctx.text_height = text_height;
+    #else
+        r_init("Gameboy", USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT,  "src/gui/fonts/DejaVuSans.ttf");
+    #endif
 
-    r_init("Gameboy", USER_WINDOW_WIDTH*2, USER_WINDOW_HEIGHT+200,  "src/gui/fonts/DejaVuSans.ttf");
-    mu_init(&ctx);
-    ctx.text_width = text_width;
-    ctx.text_height = text_height;
 
     while(cpu.running){
 
@@ -344,28 +354,29 @@ int main(int argc, char **argv){
         SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 process_input(&event);
-                switch (event.type) {
-                    case SDL_QUIT: exit(EXIT_SUCCESS); break;
-                    case SDL_MOUSEMOTION: mu_input_mousemove(&ctx, event.motion.x, event.motion.y); break;
-                    case SDL_MOUSEWHEEL: mu_input_scroll(&ctx, 0, event.wheel.y * -30); break;
-                    case SDL_TEXTINPUT: mu_input_text(&ctx, event.text.text); break;
+                #ifdef DEBUGGER_MODE
+                    switch (event.type) {
+                        case SDL_MOUSEMOTION: mu_input_mousemove(&ctx, event.motion.x, event.motion.y); break;
+                        case SDL_MOUSEWHEEL: mu_input_scroll(&ctx, 0, event.wheel.y * -30); break;
+                        case SDL_TEXTINPUT: mu_input_text(&ctx, event.text.text); break;
 
-                    case SDL_MOUSEBUTTONDOWN:
-                    case SDL_MOUSEBUTTONUP: {
-                    int b = button_map[event.button.button & 0xff];
-                    if (b && event.type == SDL_MOUSEBUTTONDOWN) { mu_input_mousedown(&ctx, event.button.x, event.button.y, b); }
-                    if (b && event.type ==   SDL_MOUSEBUTTONUP) { mu_input_mouseup(&ctx, event.button.x, event.button.y, b); }
-                    break;
-                    }
+                        case SDL_MOUSEBUTTONDOWN:
+                        case SDL_MOUSEBUTTONUP: {
+                        int b = button_map[event.button.button & 0xff];
+                        if (b && event.type == SDL_MOUSEBUTTONDOWN) { mu_input_mousedown(&ctx, event.button.x, event.button.y, b); }
+                        if (b && event.type ==   SDL_MOUSEBUTTONUP) { mu_input_mouseup(&ctx, event.button.x, event.button.y, b); }
+                        break;
+                        }
 
-                    case SDL_KEYDOWN:
-                    case SDL_KEYUP: {
-                    int c = key_map[event.key.keysym.sym & 0xff];
-                    if (c && event.type == SDL_KEYDOWN) { mu_input_keydown(&ctx, c); }
-                    if (c && event.type ==   SDL_KEYUP) { mu_input_keyup(&ctx, c);   }
-                    break;
+                        case SDL_KEYDOWN:
+                        case SDL_KEYUP: {
+                        int c = key_map[event.key.keysym.sym & 0xff];
+                        if (c && event.type == SDL_KEYDOWN) { mu_input_keydown(&ctx, c); }
+                        if (c && event.type ==   SDL_KEYUP) { mu_input_keyup(&ctx, c);   }
+                        break;
+                        }
                     }
-                }
+                #endif
             }
 
         while (cycles_this_frame < CYCLES_PER_FRAME && cpu.running){
@@ -400,27 +411,26 @@ int main(int argc, char **argv){
             
         }
         
-        /*SDL_UpdateTexture(texture, NULL, framebuffer, USER_WINDOW_WIDTH * sizeof(uint32_t));  // Update the texture with the new pixel data
-        SDL_RenderClear(renderer); // Clear the renderer
-        SDL_RenderCopy(renderer, texture, NULL, NULL); // Copy the texture to the renderer
-        SDL_RenderPresent(renderer); // Present the renderer*/
-        
-        process_frame(&ctx);
 
-
-        r_clear(mu_color(bg[0], bg[1], bg[2], 255));
-        mu_Command *cmd = NULL;
-        while (mu_next_command(&ctx, &cmd)) {
-            switch (cmd->type) {
-                case MU_COMMAND_TEXT: r_draw_text(cmd->text.str, cmd->text.pos, cmd->text.color); break;
-                case MU_COMMAND_RECT: r_draw_rect(cmd->rect.rect, cmd->rect.color); break;
-                case MU_COMMAND_IMAGE: r_draw_image(cmd->image.rect, cmd->image.rect.w, cmd->image.rect.h, cmd->image.framebuffer);break;
-                case MU_COMMAND_ICON: r_draw_icon(cmd->icon.id, cmd->icon.rect, cmd->icon.color); break;
-                case MU_COMMAND_CLIP: r_set_clip_rect(cmd->clip.rect); break;
+        #ifdef DEBUGGER_MODE
+            r_clear(mu_color(bg[0], bg[1], bg[2], 255));
+            process_frame(&ctx);
+            mu_Command *cmd = NULL;
+            while (mu_next_command(&ctx, &cmd)) {
+                switch (cmd->type) {
+                    case MU_COMMAND_TEXT: r_draw_text(cmd->text.str, cmd->text.pos, cmd->text.color); break;
+                    case MU_COMMAND_RECT: r_draw_rect(cmd->rect.rect, cmd->rect.color); break;
+                    case MU_COMMAND_IMAGE: r_draw_image(cmd->image.rect, cmd->image.rect.w, cmd->image.rect.h, cmd->image.framebuffer);break;
+                    case MU_COMMAND_ICON: r_draw_icon(cmd->icon.id, cmd->icon.rect, cmd->icon.color); break;
+                    case MU_COMMAND_CLIP: r_set_clip_rect(cmd->clip.rect); break;
+                }
             }
-        }
+        #else
+            r_clear(mu_color(0, 0, 0, 255));
+            mu_Rect r = mu_rect(0,0,USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT);
+            r_draw_image(r, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT, (const uint32_t *)framebuffer);
+        #endif
         r_present();
-
 
         clock_gettime(CLOCK_MONOTONIC, &end_time);
         long time_elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +

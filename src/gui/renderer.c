@@ -5,6 +5,8 @@
 #include <SDL2/SDL_ttf.h>
 #include "SDL_FontCache.h"
 
+
+
 static SDL_Window   *window;
 static SDL_Renderer *renderer;
 static SDL_Texture  *texture;
@@ -39,6 +41,10 @@ void r_init(const char* window_title, int window_width, int window_height, const
   if(FC_LoadFont(font, renderer, font_path, 12, FC_MakeColor(255,255,255,255), TTF_STYLE_NORMAL) == 0){
     exit(1);
   };
+
+  #ifndef DEBUGGER_MODE
+  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, window_width, window_height);
+  #endif
 }
 
 void r_draw_rect(mu_Rect rect, mu_Color color) {
@@ -49,9 +55,16 @@ void r_draw_rect(mu_Rect rect, mu_Color color) {
 }
 
 void r_draw_image(mu_Rect dst_rect, int img_width, int img_height, const uint32_t *framebuffer) {
+  
+  #ifdef DEBUGGER_MODE
   texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, img_width, img_height);
   SDL_UpdateTexture(texture, NULL, framebuffer, img_width * sizeof(uint32_t));  // Update the texture with the new pixel data
   SDL_RenderCopy(renderer, texture, NULL, (SDL_Rect *)&dst_rect); // Copy the texture to the renderer
+  //SDL_DestroyTexture(texture);
+  #else
+  SDL_UpdateTexture(texture, NULL, framebuffer, img_width * sizeof(uint32_t));  // Update the texture with the new pixel data
+  SDL_RenderCopy(renderer, texture, NULL, NULL);
+  #endif
 }
 
 void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
@@ -79,7 +92,8 @@ void r_set_clip_rect(mu_Rect rect) {
 }
 
 
-void r_clear(mu_Color clr) {
+void r_clear(mu_Color color) {
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
   SDL_RenderClear(renderer);
 }
 
