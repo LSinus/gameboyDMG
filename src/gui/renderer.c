@@ -2,7 +2,6 @@
 #include <SDL2/SDL_render.h>
 #include <assert.h>
 #include "renderer.h"
-#include "atlas.inl"
 #include <SDL2/SDL_ttf.h>
 #include "SDL_FontCache.h"
 
