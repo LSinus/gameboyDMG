@@ -3,6 +3,170 @@
 #include "cpu.h"
 #include "memory.h"
 #include "timer.h"
+#include "cartridge.h"
+#include "device.h"
+
+extern DEVICE device;
+
+/* Copies the status of the emulator inside the buffer, the provided buffer 
+   must be at least 82 bytes
+*/
+void GetEmulatorStatus(char* buf){
+    uint8_t a =  device.cpu.AF >> 8;
+    uint8_t f = (device.cpu.AF & 0xFF);
+    uint8_t b =  device.cpu.BC >> 8;
+    uint8_t c = (device.cpu.BC & 0xFF);
+    uint8_t d =  device.cpu.DE >> 8;
+    uint8_t e = (device.cpu.DE & 0xFF);
+    uint8_t h =  device.cpu.HL >> 8;
+    uint8_t l = (device.cpu.HL & 0xFF);
+    sprintf(buf, "A 0x%02X F 0x%02X B 0x%02X C: 0x%02X\nD: 0x%02X E: 0x%02X H: 0x%02X L: 0x%02X\nSP: 0x%04X PC: 0x%04X\n(%02X %02X %02X %02X)\n Halted: %d    Stopped: %d", a, f, b, c, d, e, h, l, device.cpu.SP, device.cpu.PC, ReadMem(device.cpu.PC), ReadMem(device.cpu.PC+1), ReadMem(device.cpu.PC+2), ReadMem(device.cpu.PC+3), device.cpu.halted, !device.cpu.running);
+}
+
+/* This function allows the cpu to correctly handle interrupts */
+int handleInterrupts(){
+    uint8_t IE = ReadMem(IE_REG);
+    uint8_t IF = ReadMem(IF_REG);
+
+    uint8_t requested = IE & IF;
+
+    if(!device.cpu.IME){
+        if(requested != 0) device.cpu.halted = false; // pending interrupt wakes up cpu
+        return 0;
+    }
+
+
+    if (requested == 0) {
+        return 0;
+    }
+
+    // An interrupt is happening, so the CPU is no longer halted
+    device.cpu.halted = false;
+    device.cpu.IME = false; // Disable further interrupts
+
+    // Push PC to the stack
+    device.cpu.SP -= 2;
+    WriteMem(device.cpu.SP, (uint8_t)(device.cpu.PC & 0xFF));
+    WriteMem(device.cpu.SP + 1, (uint8_t)(device.cpu.PC >> 8));
+
+    // Check interrupts in order of priority
+    if (requested & 0x01) { // V-Blank
+        device.memory[IF_REG] &= ~0x01; // Clear the request flag
+        device.cpu.PC = 0x0040;
+    } else if (requested & 0x02) { // LCD STAT
+        device.memory[IF_REG] &= ~0x02;
+        device.cpu.PC = 0x0048;
+    } else if (requested & 0x04) { // Timer
+        device.memory[IF_REG] &= ~0x04;
+        device.cpu.PC = 0x0050;
+    } else if (requested & 0x08) { // Serial
+        device.memory[IF_REG] &= ~0x08;
+        device.cpu.PC = 0x0058;
+    } else if (requested & 0x10) { // Joypad
+        device.memory[IF_REG] &= ~0x10;
+        device.cpu.PC = 0x0060;
+    }
+
+    return 20;
+}
+
+void InitializePowerOnState(){
+    device.cpu.PC = 0x0000;
+    device.cpu.SP = 0x0000;
+    device.cpu.AF = 0x0000;
+    device.cpu.BC = 0x0000;
+    device.cpu.DE = 0x0000;
+    device.cpu.HL = 0x0000;
+    
+    device.cpu.halted = false;
+    device.cpu.running = true;
+    device.cpu.IME = false;
+
+    device.boot_rom_enabled = true;
+
+    // Initialize PPU state properly
+    device.ppu.mode = MODE_2_OAM_SCAN;
+    device.ppu.cycle_counter = 0;
+    device.ppu.ly = 0;
+
+    // Initialize I/O registers
+    device.memory[0xFF00] = 0xCF; // Joypad input
+    device.memory[TIMA_REG] = 0x00; device.memory[TMA_REG] = 0x00; device.memory[TAC_REG] = 0x00;
+    device.memory[0xFF10] = 0x80; device.memory[0xFF11] = 0xBF; device.memory[0xFF12] = 0xF3;
+    device.memory[0xFF14] = 0xBF; device.memory[0xFF16] = 0x3F; device.memory[0xFF17] = 0x00;
+    device.memory[0xFF19] = 0xBF; device.memory[0xFF1A] = 0x7F; device.memory[0xFF1B] = 0xFF;
+    device.memory[0xFF1C] = 0x9F; device.memory[0xFF1E] = 0xBF; device.memory[0xFF20] = 0xFF;
+    device.memory[0xFF21] = 0x00; device.memory[0xFF22] = 0x00; device.memory[0xFF23] = 0xBF;
+    device.memory[0xFF24] = 0x77; device.memory[0xFF25] = 0xF3; device.memory[0xFF26] = 0xF1;
+    device.memory[0xFF41] = 0x02; // STAT - Start in mode 2 (OAM scan)
+    device.memory[0xFF42] = 0x00; // SCY
+    device.memory[0xFF43] = 0x00; // SCX
+    device.memory[0xFF44] = 0x00; // LY - will be updated by PPU
+    device.memory[0xFF45] = 0x00; // LYC
+    device.memory[0xFF47] = 0xE4; // BGP - Better palette: 11 10 01 00
+    device.memory[0xFF48] = 0xFF; device.memory[0xFF49] = 0xFF;
+    device.memory[0xFF4A] = 0x00; device.memory[0xFF4B] = 0x00;
+    device.memory[IE_REG] = 0x00;
+}
+
+void InitializeBootROM() {
+    FILE *bootROM = fopen("gb-bootroms/bin/dmg.bin", "rb");
+    if(bootROM){
+        fread(device.boot, 256, 1, bootROM);
+        fclose(bootROM);
+    }
+}
+
+
+bool InitializeGameROM(char *romPath) {
+    FILE *program = fopen(romPath, "rb");
+    size_t program_length;
+    if(program){
+        fseek(program, 0, SEEK_END);
+        program_length = ftell(program);
+        fseek(program, 0, SEEK_SET);
+        fread(device.memory, program_length, 1, program);
+        fclose(program);
+
+        printf("GAME TITLE: %s\n", (char *)(&device.memory[0x0134])); // GAME TITLE
+        const char* desc = cartridge_types[device.memory[0x0147]];
+        if (desc) {
+            printf("Cartridge type: %s\n", desc);
+        } else {
+            printf("Cartridge type: Unknown (0x%02X)\n", device.memory[0x0147]);
+        }
+
+        device.romPath = romPath;
+        return true;
+    }
+    return false;
+}
+
+// Add CPU state debugging
+/*
+void print_cpu_state(CPU *cpu) {
+    printf("PC:%04X SP:%04X AF:%04X BC:%04X DE:%04X HL:%04X\n Halted: %d, IME: %d, Running: %d, boot ROM enabled: %d \n\n", 
+           cpu->PC, cpu->SP, cpu->AF, cpu->BC, cpu->DE, cpu->HL, cpu->halted, cpu->IME, cpu->running, boot_rom_enabled);
+}*/
+
+void create_dummy_header() {
+    // This is the correct, official Nintendo logo A
+    uint8_t nintendo_logo[48] = {
+        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+        0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+        0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E
+    };
+
+    // Copy the logo data into the correct memory location
+    for (int i = 0; i < 48; ++i) {
+        device.memory[0x0104 + i] = nintendo_logo[i];
+    }
+
+    // A valid header checksum. The boot ROM also verifies this.
+    device.memory[0x014D] = 0xEA;
+}
+
+
 
 /* ---- FUNCTION POINTERS FOR OPCODES SECTION ---- */
 int UNKNOWN(CPU *cpu){
@@ -32,7 +196,7 @@ int LD_DEmem_A(CPU *cpu) {
 /* This performs a store of a word contained in A register to memory 
    at the address contained in a 16-bit immediate value */
 int LD_d16mem_A(CPU *cpu) {
-    uint16_t addr = FetchWord(cpu);
+    uint16_t addr = FetchWord();
     WriteMem(addr,(uint8_t)(cpu->AF >> 8));
     return 16;
 }
@@ -89,7 +253,7 @@ int LD_A_DEmem(CPU * cpu){
 /* This performs a load into A of a word contained in memory 
    at the address stored in an immediate 16 bit value */
 int LD_A_d16mem(CPU * cpu){
-    uint16_t addr = FetchWord(cpu);
+    uint16_t addr = FetchWord();
     uint16_t value = (uint16_t)ReadMem(addr);
     cpu->AF = (value << 8) | (cpu->AF & 0x00FF);
     return 16;
@@ -134,7 +298,7 @@ int LD_r_r(CPU *cpu) {
 
 /* Load into memory at the immediate 16-bit address the SP value */
 int LD_d16mem_SP(CPU *cpu){
-    uint16_t addr = FetchWord(cpu);
+    uint16_t addr = FetchWord();
     uint8_t sp_low = (uint8_t)(cpu->SP & 0x00FF);
     uint8_t sp_high = (uint8_t)(cpu->SP >> 8);
 
@@ -149,7 +313,7 @@ int LD_r_d8(CPU *cpu) {
     uint8_t opcode = ReadMem(cpu->PC - 1);
 
     // Fetch the immediate value d8 from mem
-    uint8_t d8 = FetchByte(cpu);
+    uint8_t d8 = FetchByte();
 
     // --- Put the value 'n' into the destination ---
     switch (opcode) {
@@ -167,14 +331,14 @@ int LD_r_d8(CPU *cpu) {
 
 /* This writes to IO-port n from A register */
 int LD_a8_A(CPU *cpu){
-    uint8_t n = FetchByte(cpu);
+    uint8_t n = FetchByte();
     WriteMem(0xFF00+n, (uint8_t)(cpu->AF >> 8));
     return 12;
 }
 
 /* This reads from IO-port n into A register */
 int LD_A_a8(CPU *cpu){
-    uint8_t n = FetchByte(cpu);
+    uint8_t n = FetchByte();
     cpu->AF = ((uint16_t)(ReadMem(0xFF00 + n)) << 8) | (cpu->AF & 0x00F0);
     return 12;
 }
@@ -232,7 +396,7 @@ int ADD_A_r(CPU *cpu){
 
 /* Adds an immediate 8-bit value to the accumulator and stores the result there */
 int ADD_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     
     uint16_t result = n + a;
@@ -291,7 +455,7 @@ int ADC_A_r(CPU *cpu){
 
 /* Adds an immediate 8-bit value and carry to the accumulator and stores the result there */
 int ADC_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     uint16_t c = (cpu->AF & 0x0010) >> 4;
     
@@ -350,7 +514,7 @@ int SUB_A_r(CPU *cpu){
 
 /* Subtracts an immediate 8-bit value to the accumulator and stores the result there */
 int SUB_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     
     uint16_t result = a - n;
@@ -410,7 +574,7 @@ int SBC_A_r(CPU *cpu){
 
 /* Subtracts an immediate 8-bit value and carry to the accumulator and stores the result there */
 int SBC_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     uint16_t c = (cpu->AF & 0x0010) >> 4;
     
@@ -463,7 +627,7 @@ int AND_A_r(CPU *cpu){
 }
 /* Does the logical AND between an immediate 8-bit value and the accumulator and stores the result there */
 int AND_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     
     uint16_t result = a & n;
@@ -508,7 +672,7 @@ int OR_A_r(CPU *cpu){
 }
 /* Does the logical OR between an immediate 8-bit value and the accumulator and stores the result there */
 int OR_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     
     uint16_t result = a | n;
@@ -552,7 +716,7 @@ int XOR_A_r(CPU *cpu){
 }
 /* Does the logical XOR between an immediate 8-bit value and the accumulator and stores the result there */
 int XOR_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     
     uint16_t result = a ^ n;
@@ -602,7 +766,7 @@ int CP_A_r(CPU *cpu){
 
 /* Compares an immediate 8-b value to the accumulator */
 int CP_A_d8(CPU *cpu){
-    uint16_t n = FetchByte(cpu);
+    uint16_t n = FetchByte();
     uint16_t a = cpu->AF >> 8;
     
     uint16_t result = a - n;
@@ -794,28 +958,28 @@ int CCF(CPU *cpu){
 
 /* This performs a load of a word into BC register */
 int LD_BC_d16(CPU *cpu) {
-    uint16_t value = FetchWord(cpu);
+    uint16_t value = FetchWord();
     cpu->BC = value;
     return 12; 
 }
 
 /* This performs a load of a word into DE register */
 int LD_DE_d16(CPU *cpu) {
-    uint16_t value = FetchWord(cpu);
+    uint16_t value = FetchWord();
     cpu->DE = value;
     return 12; 
 }
 
 /* This performs a load of a word into HL register */
 int LD_HL_d16(CPU *cpu) {
-    uint16_t value = FetchWord(cpu);
+    uint16_t value = FetchWord();
     cpu->HL = value;
     return 12; 
 }
 
 /* This performs a load of a word into SP register */
 int LD_SP_d16(CPU *cpu) {
-    uint16_t value = FetchWord(cpu);
+    uint16_t value = FetchWord();
     cpu->SP = value;
     return 12; 
 }
@@ -828,7 +992,7 @@ int LD_SP_HL(CPU *cpu){
 
 /* Load into HL the sum of SP with an immediate signed 8-bit value */
 int LD_HL_SPs8(CPU *cpu){
-    int8_t n = (int8_t)FetchByte(cpu);
+    int8_t n = (int8_t)FetchByte();
     uint16_t result = cpu->SP + n;
 
     cpu->AF &= 0xFF00; // Clear Z, N, H, C
@@ -950,7 +1114,7 @@ int ADD_HL_rr(CPU *cpu){
 
 /* Adds an immediate signed 8-bit value to SP */
 int ADD_SP_s8(CPU *cpu){
-    int8_t n = (int8_t)FetchByte(cpu);
+    int8_t n = (int8_t)FetchByte();
 
     uint16_t result = cpu->SP + n;
 
@@ -968,7 +1132,7 @@ int ADD_SP_s8(CPU *cpu){
 
 /* Jumps to an address represented by an immediate 16-bit value */
 int JP_d16(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     cpu->PC = address;
     return 16;
 }
@@ -982,7 +1146,7 @@ int JP_HL(CPU *cpu){
 /* Jumps to an address represented by an immediate 16-bit value
    if and only if the zero flag is not set */
 int JP_NZ_d16(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0080) == 0x0000){ // Zero flag not set
         cpu->PC = address;
         return 16;
@@ -993,7 +1157,7 @@ int JP_NZ_d16(CPU *cpu){
 /* Jumps to an address represented by an immediate 16-bit value
    if and only if the carry flag is not set */
 int JP_NC_d16(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0010) == 0x0000){ // Carry flag not set
         cpu->PC = address;
         return 16;
@@ -1004,7 +1168,7 @@ int JP_NC_d16(CPU *cpu){
 /* Jumps to an address represented by an immediate 16-bit value
    if and only if the zero flag is set */
 int JP_Z_d16(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0080) == 0x0080){ // Zero flag set
         cpu->PC = address;
         return 16;
@@ -1015,7 +1179,7 @@ int JP_Z_d16(CPU *cpu){
 /* Jumps to an address represented by an immediate 16-bit value
    if and only if the carry flag is set */
 int JP_C_d16(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0010) == 0x0010){ // Carry flag set
        cpu->PC = address;
         return 16;
@@ -1025,7 +1189,7 @@ int JP_C_d16(CPU *cpu){
 
 /* Relatively jumps with an immediate signed 8-bit value*/
 int JR_d8(CPU *cpu){
-    int8_t offset = (int8_t)FetchByte(cpu);
+    int8_t offset = (int8_t)FetchByte();
     cpu->PC += offset;
     return 12;
 }
@@ -1033,7 +1197,7 @@ int JR_d8(CPU *cpu){
 /* Relatively jumps with an offset represented by an immediate 8-bit value
    if and only if the zero flag is not set */
 int JR_NZ_d8(CPU *cpu){
-    int8_t offset = (int8_t)FetchByte(cpu);
+    int8_t offset = (int8_t)FetchByte();
     if((cpu->AF & 0x0080) == 0x0000){ // Zero flag not set
         cpu->PC += offset;
         return 12;
@@ -1044,7 +1208,7 @@ int JR_NZ_d8(CPU *cpu){
 /* Relatively jumps with an offset represented by an immediate 8-bit value
    if and only if the carry flag is not set */
 int JR_NC_d8(CPU *cpu){
-    int8_t offset = (int8_t)FetchByte(cpu);
+    int8_t offset = (int8_t)FetchByte();
     if((cpu->AF & 0x0010) == 0x0000){ // Carry flag not set
         cpu->PC += offset;
         return 12;
@@ -1055,7 +1219,7 @@ int JR_NC_d8(CPU *cpu){
 /* Relatively jumps with an offset represented by an immediate 8-bit value
    if and only if the zero flag is set */
 int JR_Z_d8(CPU *cpu){
-    int8_t offset = (int8_t)FetchByte(cpu);
+    int8_t offset = (int8_t)FetchByte();
     if((cpu->AF & 0x0080) == 0x0080){ // Zero flag set
         cpu->PC += offset;
         return 12;
@@ -1066,7 +1230,7 @@ int JR_Z_d8(CPU *cpu){
 /* Relatively jumps with an offset represented by an immediate 8-bit value
    if and only if the carry flag is set */
 int JR_C_d8(CPU *cpu){
-    int8_t offset = (int8_t)FetchByte(cpu);
+    int8_t offset = (int8_t)FetchByte();
     if((cpu->AF & 0x0010) == 0x0010){ // Carry flag set
         cpu->PC += offset;
         return 12;
@@ -1076,7 +1240,7 @@ int JR_C_d8(CPU *cpu){
 
 /* Calls a procedure saving program counter */
 int CALL(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     cpu->SP -= 2;
     WriteMem(cpu->SP, (uint8_t)(cpu->PC & 0xFF));
     WriteMem(cpu->SP + 1, (uint8_t)(cpu->PC >> 8));
@@ -1088,7 +1252,7 @@ int CALL(CPU *cpu){
    if and only if zero flag is not set
  */
 int CALL_NZ(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0080) == 0x0000){ // Zero flag not set
         cpu->SP -= 2;
         WriteMem(cpu->SP, (uint8_t)(cpu->PC & 0xFF));
@@ -1103,7 +1267,7 @@ int CALL_NZ(CPU *cpu){
    if and only if zero flag is set
  */
 int CALL_Z(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0080) == 0x0080){ // Zero flag set
         cpu->SP -= 2;
         WriteMem(cpu->SP, (uint8_t)(cpu->PC & 0xFF));
@@ -1118,7 +1282,7 @@ int CALL_Z(CPU *cpu){
    if and only if carry flag is not set
  */
 int CALL_NC(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0010) == 0x0000){ // Carry flag not set
         cpu->SP -= 2;
         WriteMem(cpu->SP, (uint8_t)(cpu->PC & 0xFF));
@@ -1133,7 +1297,7 @@ int CALL_NC(CPU *cpu){
    if and only if carry flag is set
  */
 int CALL_C(CPU *cpu){
-    uint16_t address = FetchWord(cpu);
+    uint16_t address = FetchWord();
     if((cpu->AF & 0x0010) == 0x0010){ // Carry flag set
         cpu->SP -= 2;
         WriteMem(cpu->SP, (uint8_t)(cpu->PC & 0xFF));
@@ -1232,12 +1396,14 @@ int RST(CPU *cpu){
 /* --- GMB CPU-Controlcommands --- */
 
 /* This performs a no-operation on the cpu*/
-int NOP(CPU *cpu){ return 4; }
+int NOP(CPU *cpu){ 
+    return 4; 
+}
 
 /* This performs the HALT instruction */
 int HALT(CPU *cpu){ 
-    uint8_t IF = memory[IF_REG];
-    uint8_t IE = memory[IE_REG];
+    uint8_t IF = device.memory[IF_REG];
+    uint8_t IE = device.memory[IE_REG];
     // HALT bug
    if(!cpu->IME && (IE & IF) != 0){
         cpu->halt_bug = true;
@@ -1250,20 +1416,21 @@ int HALT(CPU *cpu){
 int STOP(CPU *cpu){
     /* The STOP instruction is two bytes long. The 0x10 has already been
        fetched, so fetch the following 0x00 byte. */
-    FetchByte(cpu);
+    FetchByte();
 
     // resets DIV register 
-    memory[DIV_REG] = 0; 
-    timer.div_cycle_counter = 0;
+    device.memory[DIV_REG] = 0; 
+    device.timer.div_cycle_counter = 0;
 
-    uint8_t TAC = memory[TAC_REG];
+    uint8_t TAC = device.memory[TAC_REG];
 
     if((TAC & 0x0040) != 0){ // Enable = 1 increment TIMA
 
     }
 
     // TODO CHANGE AFTER PPU AND JOYPAD
-    cpu->halted = true;
+    //cpu->running = false;
+    //cpu->halted = true;
     return 4;
 }
 
@@ -1280,7 +1447,7 @@ int EI(CPU *cpu){
 }
 
 int handle_cb_prefix(CPU *cpu){
-    uint8_t opcode = FetchByte(cpu);
+    uint8_t opcode = FetchByte();
     return 4 + cb_instruction_table[opcode](cpu);
 }
 

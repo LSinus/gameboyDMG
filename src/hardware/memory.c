@@ -4,18 +4,15 @@
 #include "ppu.h"
 #include "timer.h"
 #include "joypad.h"
+#include "device.h"
 
-bool boot_rom_enabled = true;
-uint8_t boot[256];
-uint8_t memory[65536];
-
-DMA dma = {0};
+extern DEVICE device;
 
 void WriteMem(uint16_t addr, uint8_t data){
     uint8_t ppu_mode = ppu_get_mode();
 
     //Check for VRAM read restrictions
-    uint8_t LCDC = memory[0xFF40];
+    uint8_t LCDC = device.memory[0xFF40];
     if((LCDC >> 7) == 1){ // LCD and PPU are enabled
         if (addr >= 0x8000 && addr <= 0x9FFF) {
             if (ppu_mode == MODE_3_DRAWING) {
@@ -32,21 +29,21 @@ void WriteMem(uint16_t addr, uint8_t data){
     }
 
     if(addr == 0xFF50){
-        boot_rom_enabled = false; // Disable the boot ROM
+        device.boot_rom_enabled = false; // Disable the boot ROM
     }
 
     if(addr == 0xFF46){ // DMA transfer
         uint16_t transfer_source = data * 0x0100;
-        memcpy(&memory[0xFE00], &memory[transfer_source], 40*4); // 40 sprites 4 byte each
-        dma.running = true;
-        dma.cycles = 0;
+        memcpy(&(device.memory[0xFE00]), &(device.memory[transfer_source]), 40*4); // 40 sprites 4 byte each
+        device.dma.running = true;
+        device.dma.cycles = 0;
     }
 
-    if(addr != DIV_REG) memory[addr] = data;
+    if(addr != DIV_REG) device.memory[addr] = data;
     else { // writing DIV register resets it
-        memory[DIV_REG] = 0x00; 
-        timer.div_cycle_counter = 0;
-        timer.tima_cycle_counter = 0;
+        device.memory[DIV_REG] = 0x00; 
+        device.timer.div_cycle_counter = 0;
+        device.timer.tima_cycle_counter = 0;
     }
 }
 
@@ -54,7 +51,7 @@ uint8_t ReadMem(uint16_t addr){
     uint8_t ppu_mode = ppu_get_mode();
 
     // check for dma running
-    if(dma.running){
+    if(device.dma.running){
         if(addr < 0xFF80 || addr > 0xFFFE){
             return 0xFF;
         }
@@ -66,7 +63,7 @@ uint8_t ReadMem(uint16_t addr){
 
     // Check for VRAM read restrictions
     //Check for VRAM read restrictions
-    uint8_t LCDC = memory[0xFF40];
+    uint8_t LCDC = device.memory[0xFF40];
     if((LCDC >> 7) == 1){ // LCD and PPU are enabled
         if (addr >= 0x8000 && addr <= 0x9FFF) {
             if (ppu_mode == MODE_3_DRAWING) {
@@ -82,47 +79,47 @@ uint8_t ReadMem(uint16_t addr){
         }
     }
 
-    if(boot_rom_enabled && addr < 0x0100){
-        return boot[addr];
+    if(device.boot_rom_enabled && addr < 0x0100){
+        return device.boot[addr];
     }
 
     if(addr == 0xFF00){
-        uint8_t P1 = memory[0xFF00];
+        uint8_t P1 = device.memory[0xFF00];
         P1 |= 0x0F; // all buttons unpressed (0 pressed 1 unpressed)
         if((P1 & 0x10) == 0){ // D-Pad buttons
-            if (joypad.right) P1 &= ~0x01; // Bit 0 (Right)
-            if (joypad.left)  P1 &= ~0x02; // Bit 1 (Left)
-            if (joypad.up)    P1 &= ~0x04; // Bit 2 (Up)
-            if (joypad.down)  P1 &= ~0x08; // Bit 3 (Down)
+            if (device.joypad.right) P1 &= ~0x01; // Bit 0 (Right)
+            if (device.joypad.left)  P1 &= ~0x02; // Bit 1 (Left)
+            if (device.joypad.up)    P1 &= ~0x04; // Bit 2 (Up)
+            if (device.joypad.down)  P1 &= ~0x08; // Bit 3 (Down)
         }
         if ((P1 & 0x20) == 0) { // Action buttons
-            if (joypad.a)      P1 &= ~0x01; // Bit 0 (A)
-            if (joypad.b)      P1 &= ~0x02; // Bit 1 (B)
-            if (joypad.select) P1 &= ~0x04; // Bit 2 (Select)
-            if (joypad.start)  P1 &= ~0x08; // Bit 3 (Start)
+            if (device.joypad.a)      P1 &= ~0x01; // Bit 0 (A)
+            if (device.joypad.b)      P1 &= ~0x02; // Bit 1 (B)
+            if (device.joypad.select) P1 &= ~0x04; // Bit 2 (Select)
+            if (device.joypad.start)  P1 &= ~0x08; // Bit 3 (Start)
         }
         return P1;
     }
 
-    return memory[addr];
+    return device.memory[addr];
 }
 
 /* This function fetches and returns a byte from memory at the address of
    the program counter and increments it. */
-uint8_t FetchByte(CPU *cpu){
-    if(cpu->halt_bug){
-        cpu->halt_bug = false;
-        return ReadMem(cpu->PC);
+uint8_t FetchByte(){
+    if(device.cpu.halt_bug){
+        device.cpu.halt_bug = false;
+        return ReadMem(device.cpu.PC);
     }
-    return ReadMem(cpu->PC++);
+    return ReadMem(device.cpu.PC++);
 }
 
 /* This function fetches and return a 16-bit word from memory at the address of
    the program counter and increments it. The word is stored in little endian
    so the shift is needed to return the right value */
-uint16_t FetchWord(CPU *cpu){
-    uint16_t lsb = (uint16_t)FetchByte(cpu);
-    uint16_t msb = (uint16_t)FetchByte(cpu);
+uint16_t FetchWord(){
+    uint16_t lsb = (uint16_t)FetchByte();
+    uint16_t msb = (uint16_t)FetchByte();
     return (msb << 8) | lsb;
 }
 
@@ -130,8 +127,8 @@ uint16_t FetchWord(CPU *cpu){
 
 /* This function updates the dma if active */
 void dma_step(int cycles){
-    if(dma.running){
-        dma.cycles += cycles;
-        if(dma.cycles >= 640) dma.running = false;
+    if(device.dma.running){
+        device.dma.cycles += cycles;
+        if(device.dma.cycles >= 640) device.dma.running = false;
     }
 }

@@ -1,21 +1,20 @@
 #include "timer.h"
-#include "cpu.h"
-#include "memory.h"
+#include "device.h"
 
-TIMER timer = {0};
+extern DEVICE device;
 
 /* This function updates timers for clock T-cycles executed */
 void timer_step(int Tcycles){
-    timer.div_cycle_counter   += Tcycles;
-    timer.tima_cycle_counter += Tcycles;
+    device.timer.div_cycle_counter   += Tcycles;
+    device.timer.tima_cycle_counter += Tcycles;
 
-    if(timer.div_cycle_counter >= (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ)){
-        size_t increment = timer.div_cycle_counter / (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ);
-        memory[DIV_REG] += increment;
-        timer.div_cycle_counter %= (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ);
+    if(device.timer.div_cycle_counter >= (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ)){
+        size_t increment = device.timer.div_cycle_counter / (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ);
+        device.memory[DIV_REG] += increment;
+        device.timer.div_cycle_counter %= (CLOCK_FREQ_HZ / DIV_INC_FREQ_HZ);
     }
 
-    uint8_t TAC = memory[TAC_REG];
+    uint8_t TAC = device.memory[TAC_REG];
     if((TAC & 0x04) != 0){ // Enable = 1 so increment TIMA
         size_t tima_inc_rate;
 
@@ -27,18 +26,18 @@ void timer_step(int Tcycles){
         }
         uint32_t threshold = CLOCK_FREQ_HZ / tima_inc_rate;
 
-        while (timer.tima_cycle_counter >= threshold) {
-            timer.tima_cycle_counter -= threshold;
+        while (device.timer.tima_cycle_counter >= threshold) {
+            device.timer.tima_cycle_counter -= threshold;
 
             // Increment TIMA by exactly 1
-            memory[TIMA_REG]++;
+            device.memory[TIMA_REG]++;
 
             // If TIMA just overflowed (went from 255 to 0)
-            if (memory[TIMA_REG] == 0) {
+            if (device.memory[TIMA_REG] == 0) {
                 // Load the value from TMA
-                memory[TIMA_REG] = memory[TMA_REG];
+                device.memory[TIMA_REG] = device.memory[TMA_REG];
                 // Request a timer interrupt
-                memory[IF_REG] |= 0x04;
+                device.memory[IF_REG] |= 0x04;
             }
         }
     }

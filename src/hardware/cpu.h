@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "ppu.h"
+
 #define CLOCK_FREQ_HZ 4194304
 
 /* Definition of CPU for Nintendo Gameboy */
@@ -20,8 +22,12 @@ typedef struct CPU {
     bool halted;
     bool halt_bug;
     bool IME;
-} CPU;
 
+
+#ifdef DEBUGGER_MODE
+    bool slowed;
+#endif
+} CPU;
 
 /* Instruction function pointer type */
 typedef int (*Instruction)(CPU *cpu);
@@ -33,5 +39,15 @@ Instruction instruction_table[256];
 Instruction cb_instruction_table[256];
 
 void InitializeInstructionTable();
+void InitializePowerOnState();
+void InitializeBootROM();
+bool InitializeGameROM(char *romPath);
+void create_dummy_header();
+int handleInterrupts();
+/* Copies the status of the emulator inside the buffer, the provided buffer 
+   must be at least 82 bytes
+*/
+void GetEmulatorStatus(char* buf);
+
 
 #endif

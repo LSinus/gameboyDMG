@@ -721,7 +721,7 @@ void mu_text(mu_Context *ctx, const char *text) {
     start = end = p;
     do {
       const char* word = p;
-      while (*p && *p != ' ' && *p != '\n') { p++; }
+      while (*p && *p != '\n') { p++; }
       w += ctx->text_width(font, word, p - word);
       if (w > r.w && end != start) { break; }
       w += ctx->text_width(font, p, 1);

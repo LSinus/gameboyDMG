@@ -11,9 +11,6 @@ typedef struct TIMER {
     size_t tima_cycle_counter;
 } TIMER;
 
-extern TIMER timer;
-
-
 void timer_step(int Tcycles);
 
 

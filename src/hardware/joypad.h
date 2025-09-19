@@ -9,6 +9,4 @@ typedef struct JOYPAD {
     bool down, up, left, right;
 } JOYPAD;
 
-extern JOYPAD joypad;
-
 #endif

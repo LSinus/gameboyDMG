@@ -7,12 +7,15 @@ LIBS = -L/opt/homebrew/lib -lSDL2 -lSDL2_ttf $(GLFLAG)
 
 CFILES = src/gui/microui.c \
          src/gui/renderer.c \
+         src/gui/gui.c \
          src/gui/SDL_FontCache.c \
          src/hardware/cpu.c \
          src/hardware/memory.c \
          src/hardware/ppu.c \
          src/hardware/timer.c \
          src/hardware/joypad.c \
+         src/hardware/device.c \
+         src/hardware/cartridge.c \
          src/gameboy.c
 all: 
 	$(CC) $(CFLAGS_DEBUG) $(CFILES) -o gameboy $(LIBS)
