@@ -34,8 +34,8 @@ static const char * codepoints_map[5] = { "\u1000", "\u2715", "\u2713", "\u25B6"
 void r_init(const char* window_title, int window_width, int window_height, const char *font_path) {
   /* init SDL window */
   SDL_Init(SDL_INIT_EVERYTHING);
-  window = SDL_CreateWindow(window_title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
-  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+  window = SDL_CreateWindow(window_title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
+  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
   font = FC_CreateFont();  
   if(FC_LoadFont(font, renderer, font_path, 12, FC_MakeColor(255,255,255,255), TTF_STYLE_NORMAL) == 0){
@@ -55,16 +55,15 @@ void r_draw_rect(mu_Rect rect, mu_Color color) {
 }
 
 void r_draw_image(mu_Rect dst_rect, int img_width, int img_height, const uint32_t *framebuffer) {
-  
-  #ifdef DEBUGGER_MODE
+#ifdef DEBUGGER_MODE
   texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, img_width, img_height);
   SDL_UpdateTexture(texture, NULL, framebuffer, img_width * sizeof(uint32_t));  // Update the texture with the new pixel data
   SDL_RenderCopy(renderer, texture, NULL, (SDL_Rect *)&dst_rect); // Copy the texture to the renderer
-  //SDL_DestroyTexture(texture);
-  #else
+  SDL_DestroyTexture(texture);
+#else
   SDL_UpdateTexture(texture, NULL, framebuffer, img_width * sizeof(uint32_t));  // Update the texture with the new pixel data
   SDL_RenderCopy(renderer, texture, NULL, NULL);
-  #endif
+#endif
 }
 
 void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
