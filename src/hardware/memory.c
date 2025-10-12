@@ -9,6 +9,9 @@
 extern DEVICE device;
 
 void WriteMem(uint16_t addr, uint8_t data){
+    // First bank of cartridge ROM so not writable
+    if(addr <= 0x7FFF) return; // Maybe it should be set also for other banks
+    
     uint8_t ppu_mode = ppu_get_mode();
 
     //Check for VRAM read restrictions
@@ -27,6 +30,20 @@ void WriteMem(uint16_t addr, uint8_t data){
             }
         }
     }
+
+    /* When the lcd and ppu are disabled resets ppu state 
+       The LCD & PPU enable is the last bit of the data, 0
+       means disabled
+    */
+    if(addr == 0xFF40 && (data & 0x80) == 0){
+        // LY reset to 0
+        device.memory[0xFF44] = 0;
+        device.ppu.ly = 0;
+        ppu_set_mode(MODE_0_HBLANK);
+    }
+
+
+    if(addr == 0xFF44) return; // LY is not writable
 
     if(addr == 0xFF50){
         device.boot_rom_enabled = false; // Disable the boot ROM
@@ -56,10 +73,6 @@ uint8_t ReadMem(uint16_t addr){
             return 0xFF;
         }
     }
-
-    #ifdef DEBUG_TEST_LOG
-        if(addr == 0xFF44) return 0x90;
-    #endif
 
     // Check for VRAM read restrictions
     //Check for VRAM read restrictions

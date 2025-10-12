@@ -20,6 +20,16 @@ void ppu_set_mode(PPU_MODE mode){
 }
 
 
+void ppu_lcd_off(){
+    device.memory[0xFF44] = 0;
+    device.ppu.ly = 0;
+    ppu_set_mode(MODE_0_HBLANK);
+}
+
+bool ppu_lcd_get_on(){
+    return (device.memory[0xFF40] & 0x80) != 0;
+}
+
 
 /* This function gets data from VRAM and sends it to LCD framebuffer at the end 
    of the execution of this function a new line is visible on the screen. */
@@ -258,6 +268,9 @@ void ppu_oam_scan(){
  * after the CPU has exectuted an instruction that takes an amount of time 
 */
 void ppu_step(int cycles){
+    // PPU is off
+    if(!ppu_lcd_get_on()) return;
+
     device.ppu.cycle_counter += cycles;
 
     uint8_t STAT   = device.memory[0xFF41];
@@ -315,19 +328,28 @@ void ppu_step(int cycles){
             }
             break;
         case MODE_1_VBLANK:
+            if (device.ppu.ly == 153 && device.ppu.cycle_counter >= 4) {
+                device.ppu.ly = 0;
+                device.memory[0xFF44] = device.ppu.ly;
+            }
+
             if (device.ppu.cycle_counter >= 456) { // One scanline worth of time
                 device.ppu.cycle_counter -= 456;
-                device.ppu.ly++;
-                device.memory[0xFF44] = device.ppu.ly;
 
-                if (device.ppu.ly > 153) {
+                if (device.ppu.ly == 0) {
                     device.ppu.ly = 0;
                     device.memory[0xFF44] = 0;
                     ppu_set_mode(MODE_2_OAM_SCAN);
                     ppu_oam_scan();
                     // check if in STAT an interrupt for this event has to be requested
                     if((STAT & 0x20) != 0) device.memory[IF_REG] |= 0x02; // request STAT interrupt
+                    return;
                 }
+
+                device.ppu.ly++;
+                device.memory[0xFF44] = device.ppu.ly;
+
+                
             }
             break;
     }

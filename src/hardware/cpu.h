@@ -22,6 +22,7 @@ typedef struct CPU {
     bool halted;
     bool halt_bug;
     bool IME;
+    bool request_IME;
 
 
 #ifdef DEBUGGER_MODE
@@ -39,15 +40,4 @@ Instruction instruction_table[256];
 Instruction cb_instruction_table[256];
 
 void InitializeInstructionTable();
-void InitializePowerOnState();
-void InitializeBootROM();
-bool InitializeGameROM(char *romPath);
-void create_dummy_header();
-int handleInterrupts();
-/* Copies the status of the emulator inside the buffer, the provided buffer 
-   must be at least 82 bytes
-*/
-void GetEmulatorStatus(char* buf);
-
-
 #endif

@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <unistd.h>
 #include <time.h>
 #include <stdlib.h>
 
@@ -134,7 +133,8 @@ void inspect_tile_data(){
 
 
 
-#ifdef DEBUG_TEST_LOG
+#ifdef DEBUGGER_MODE
+FILE *logger;
 void InitializeLogger(FILE **logger){
     *logger = fopen("gameboy.log", "w");
     if(*logger == NULL){
@@ -147,52 +147,53 @@ void EndLogger(FILE **logger){
     fclose(*logger);
 }
 
-void logEmulatorSatus(FILE **logger, CPU *cpu){
-    if(*logger == NULL){
+void logEmulatorSatus(){
+    if(logger == NULL){
         printf("logger is NULL\n");
         exit(1);
     }
     char buf[128];
-    GetEmulatorStatus(buf, cpu);
-    fprintf(*logger, buf);
+    GetEmulatorStatusFile(buf);
+    fprintf(logger, buf);
 }
 #endif
 
-SDL_mutex *mutex;
-SDL_Event event;
+		SDL_mutex *mutex;
+		SDL_Event event;
 
-void EmulatorLoop(){
-    uint64_t start_time = 0, end_time, sleep_duration_ms;
+		void EmulatorLoop(){
+           
+			uint64_t start_time = 0, end_time, sleep_duration_ms;
 
-    while(device.cpu.running){
-        SDL_LockMutex(mutex);
-        
-        start_time = SDL_GetTicks64();
-        int cycles_this_frame = 0;
+			while(device.cpu.running){
+				SDL_LockMutex(mutex);
+				
+				start_time = SDL_GetTicks64();
+				int cycles_this_frame = 0;
 
-        #ifndef DEBUGGER_MODE
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            process_input(&event);
-        }
-        #endif
+				#ifndef DEBUGGER_MODE
+				SDL_Event event;
+				while (SDL_PollEvent(&event)) {
+					process_input(&event);
+				}
+				#endif
 
 
-        #ifdef DEBUGGER_MODE 
-        size_t clock_limit = device.cpu.slowed ? 1 : CYCLES_PER_FRAME;
-        while (cycles_this_frame < clock_limit && device.cpu.running){
-        //while (cycles_this_frame <  && device.cpu.running){
-        #else
-        while (cycles_this_frame < CYCLES_PER_FRAME && device.cpu.running){
-        #endif
-            int cycles_executed = 0;
+				#ifdef DEBUGGER_MODE 
+				size_t clock_limit = device.cpu.slowed ? 1 : CYCLES_PER_FRAME;
+				while (cycles_this_frame < clock_limit && device.cpu.running){
+				//while (cycles_this_frame <  && device.cpu.running){
+				#else
+				while (cycles_this_frame < CYCLES_PER_FRAME && device.cpu.running){
+				#endif
+					int cycles_executed = 0;
 
-            // First, check if an interrupt needs to be serviced.
-            cycles_executed += handleInterrupts();
-        
-            #ifdef DEBUG_TEST_LOG
-                if(!boot_rom_enabled) logEmulatorSatus(&logger, &cpu);
-            #endif
+					// First, check if an interrupt needs to be serviced.
+					cycles_executed += handleInterrupts();
+				
+                #ifdef DEBUGGER_MODE
+                    if(!device.boot_rom_enabled) logEmulatorSatus();
+                #endif
 
             if (device.cpu.halted) {
                 cycles_executed += 4;
@@ -260,6 +261,7 @@ int main(int argc, char **argv){
     mutex = SDL_CreateMutex();
     
     #ifdef DEBUGGER_MODE
+        InitializeLogger(&logger);
         SDL_Thread *thread = SDL_CreateThread((SDL_ThreadFunction)EmulatorLoop, "EmulationThread", NULL);
         r_init("Gameboy Debugger", USER_WINDOW_WIDTH*2, USER_WINDOW_HEIGHT+200,  "src/gui/fonts/DejaVuSans.ttf");
         mu_init(&ctx);
@@ -313,6 +315,7 @@ int main(int argc, char **argv){
             r_present();
         }
         SDL_WaitThread(thread, 0);
+        EndLogger(&logger);
     #else
         r_init("Gameboy", USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT,  "src/gui/fonts/DejaVuSans.ttf");
         EmulatorLoop();

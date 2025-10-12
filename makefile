@@ -16,6 +16,7 @@ CFILES = src/gui/microui.c \
          src/hardware/joypad.c \
          src/hardware/device.c \
          src/hardware/cartridge.c \
+         src/hardware/debugger.c \
          src/gameboy.c
 all: 
 	$(CC) $(CFLAGS_DEBUG) $(CFILES) -o gameboy $(LIBS)

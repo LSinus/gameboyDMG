@@ -37,6 +37,7 @@ void ppu_oam_scan();
 void ppu_scanline();
 void ppu_set_mode(PPU_MODE mode);
 uint8_t ppu_get_mode();
-
+void ppu_lcd_off();
+bool ppu_lcd_get_on();
 
 #endif

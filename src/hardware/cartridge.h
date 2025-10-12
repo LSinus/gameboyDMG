@@ -4,8 +4,8 @@
 #define CARTRIDGE_H
 
 typedef struct CARTRIDGE{
-    char *title;
-    char *type;
+    const char *title;
+    const char *type;
     char *ROMSize;
     char *RAMSize;
     // TODO IMPLEMENT THE CARTRIDGE HEADER AND MBC

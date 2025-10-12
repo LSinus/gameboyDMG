@@ -99,7 +99,7 @@ static void joypad_window(mu_Context *ctx){
 
 
 /* ----   LOAD ROM INPUT ---- */
-static  char logbuf[255];
+static  char logbuf[1000];
 static   int logbuf_updated = 0;
 
 static void write_log(const char *text) {
@@ -123,7 +123,7 @@ static void load_rom_window(mu_Context *ctx){
     }
 
     /* input textbox + submit button */
-    static char buf[128];
+    static char buf[255];
     int submitted = 0;
     mu_layout_row(ctx, 2, (int[]) { -70, -1 }, 0);
     if (mu_textbox(ctx, buf, sizeof(buf)) & MU_RES_SUBMIT) {
@@ -136,16 +136,15 @@ static void load_rom_window(mu_Context *ctx){
             memset(device.memory, 0, 65536);
             InitializePowerOnState();
             InitializeBootROM();
-            sprintf(buf, "GAME TITLE: %s\n", (char *)(&device.memory[0x0134]));
-            write_log(buf); 
-            const char* desc = cartridge_types[device.memory[0x0147]];
+            write_log(device.cartridge.title); 
+            /*const char* desc = cartridge_types[device.memory[0x0147]];
             if (desc) {
                 sprintf(buf, "Cartridge type: %s\n", desc);
                 write_log(buf);
             } else {
                 sprintf(buf, "Cartridge type: Unknown (0x%02X)\n", device.memory[0x0147]);
                 write_log(buf);
-            }
+            }*/
         }
         else {
             sprintf(buf, "ERROR ROM doesn't exists at: %s\n", buf);
