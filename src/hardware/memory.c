@@ -9,8 +9,8 @@
 extern DEVICE device;
 
 void WriteMem(uint16_t addr, uint8_t data){
-    // First bank of cartridge ROM so not writable
-    if(addr <= 0x7FFF) return; // Maybe it should be set also for other banks
+    // memory banks of cartridge ROM so not writable
+    if(addr <= 0x7FFF) return; 
     
     uint8_t ppu_mode = ppu_get_mode();
 

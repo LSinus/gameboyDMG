@@ -140,7 +140,7 @@ void InitializePowerOnState(){
 }
 
 void InitializeBootROM() {
-    FILE *bootROM = fopen("gb-bootroms/bin/dmg.bin", "rb");
+    FILE *bootROM = fopen("bootroms/dmg.bin", "rb");
     if(bootROM){
         fread(device.boot, 256, 1, bootROM);
         fclose(bootROM);

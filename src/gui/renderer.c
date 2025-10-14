@@ -2,8 +2,8 @@
 #include <SDL2/SDL_render.h>
 #include <assert.h>
 #include "renderer.h"
-#include <SDL2/SDL_ttf.h>
-#include "SDL_FontCache.h"
+#include <SDL_ttf.h>
+#include "../../external/SDL_FontCache.h"
 
 
 

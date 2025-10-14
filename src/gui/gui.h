@@ -1,7 +1,7 @@
 #ifndef GUI_H
 #define GUI_H
 
-#include "microui.h"
+#include "../../external/microui.h"
 #include "renderer.h"
 
 extern mu_Context ctx;

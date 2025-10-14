@@ -2,6 +2,7 @@
 gameboy.dSYM
 tests
 roms
+build
 cpu_instrs.gb
 gameboy
 gameboy.log

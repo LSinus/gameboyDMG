@@ -13,7 +13,7 @@
 
 #include "hardware/device.h"
 
-#include "gui/microui.h"
+#include "../external/microui.h"
 #include "gui/renderer.h"
 #include "gui/gui.h"
 
@@ -263,7 +263,7 @@ int main(int argc, char **argv){
     #ifdef DEBUGGER_MODE
         InitializeLogger(&logger);
         SDL_Thread *thread = SDL_CreateThread((SDL_ThreadFunction)EmulatorLoop, "EmulationThread", NULL);
-        r_init("Gameboy Debugger", USER_WINDOW_WIDTH*2, USER_WINDOW_HEIGHT+200,  "src/gui/fonts/DejaVuSans.ttf");
+        r_init("Gameboy Debugger", USER_WINDOW_WIDTH*2, USER_WINDOW_HEIGHT+200,  "fonts/DejaVuSans.ttf");
         mu_init(&ctx);
         ctx.text_width = gui_text_width;
         ctx.text_height = gui_text_height;
@@ -317,7 +317,7 @@ int main(int argc, char **argv){
         SDL_WaitThread(thread, 0);
         EndLogger(&logger);
     #else
-        r_init("Gameboy", USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT,  "src/gui/fonts/DejaVuSans.ttf");
+        r_init("Gameboy", USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT,  "fonts/DejaVuSans.ttf");
         EmulatorLoop();
     #endif
     r_quit();

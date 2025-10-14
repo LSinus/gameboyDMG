@@ -1,7 +1,7 @@
 #ifndef RENDERER_H
 #define RENDERER_H
 
-#include "microui.h"
+#include "../../external/microui.h"
 #include <stdint.h>
 
 extern const char button_map[256];

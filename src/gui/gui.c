@@ -1,7 +1,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "microui.h"
+#include "../../external/microui.h"
 #include "renderer.h"
 #include "../hardware/device.h"
 
