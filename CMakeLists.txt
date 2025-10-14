@@ -9,6 +9,27 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
+if(UNIX)
+    execute_process(
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/external/SDL_ttf-release-2.24.0/external/download.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/external/SDL_ttf-release-2.24.0/external
+        RESULT_VARIABLE result
+    )
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Dependency installation failed")
+    endif()
+elseif(WIN32)
+    execute_process(
+        COMMAND powershell -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/external/SDL_ttf-release-2.24.0/external/Get-GitModules.ps1"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/external/SDL_ttf-release-2.24.0/external
+        RESULT_VARIABLE result
+    )
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Dependency installation failed")
+    endif()
+endif()
+
+
 if(UNIX AND NOT APPLE)  # Linux
 	set(SDL_VIDEO ON CACHE BOOL "" FORCE)
     set(SDL_VIDEO_X11 ON CACHE BOOL "" FORCE)
