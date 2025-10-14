@@ -33,10 +33,21 @@ static const char * codepoints_map[5] = { "\u1000", "\u2715", "\u2713", "\u25B6"
 
 void r_init(const char* window_title, int window_width, int window_height, const char *font_path) {
   /* init SDL window */
-  SDL_Init(SDL_INIT_EVERYTHING);
-  window = SDL_CreateWindow(window_title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
+  int init = SDL_Init(SDL_INIT_EVERYTHING);
+  if(init != 0){
+	printf("Error: %s\n", SDL_GetError());
+  }
+  window = SDL_CreateWindow(window_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_width, window_height,SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
+  if(!window){
+	printf("Error: window not initialized properly\n");
+	SDL_Quit();
+  }
+  printf("[INFO] Window intialized\n");
   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-
+  if(!renderer){
+	printf("Error: renderer not initialized properly\n");
+	SDL_Quit();
+  }
   font = FC_CreateFont();  
   if(FC_LoadFont(font, renderer, font_path, 12, FC_MakeColor(255,255,255,255), TTF_STYLE_NORMAL) == 0){
     exit(1);

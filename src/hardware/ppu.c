@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "ppu.h"
 #include "memory.h"
 #include "device.h"

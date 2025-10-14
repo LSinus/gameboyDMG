@@ -34,10 +34,10 @@ typedef struct CPU {
 typedef int (*Instruction)(CPU *cpu);
 
 /* Look-up table of function pointers for 8-bit instructions */
-Instruction instruction_table[256];
+extern Instruction instruction_table[256];
 
 /* Look-up table of function pointers for CB-prefixed instructions */
-Instruction cb_instruction_table[256];
+extern Instruction cb_instruction_table[256];
 
 void InitializeInstructionTable();
 #endif

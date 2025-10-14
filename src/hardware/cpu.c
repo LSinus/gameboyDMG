@@ -8,6 +8,9 @@
 
 extern DEVICE device;
 
+Instruction instruction_table[256];
+Instruction cb_instruction_table[256];
+
 // Add CPU state debugging
 /*
 void print_cpu_state(CPU *cpu) {
