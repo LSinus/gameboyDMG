@@ -33,9 +33,9 @@ You will see some infos about the cartridge that you are using on the terminal.
 all the feature required in order to run correctly that game.
 
 ## Images
-![Logo](.images/logo.png)
-![Kirby](.images/kirby.png)
-![DrMario](.images/DrMario.png)
+![Logo](./images/logo.png)
+![Kirby](./images/kirby.png)
+![DrMario](./images/DrMario.png)
 
 
 ## Contribution
