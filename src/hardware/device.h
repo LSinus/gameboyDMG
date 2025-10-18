@@ -17,7 +17,6 @@ typedef struct {
     DMA dma;
 
     CARTRIDGE cartridge;
-    char *romPath;
 
     bool boot_rom_enabled;
     uint8_t boot[256];
@@ -27,7 +26,6 @@ typedef struct {
 
 void InitializePowerOnState();
 void InitializeBootROM();
-bool InitializeGameROM(char *romPath);
 void create_dummy_header();
 int handleInterrupts();
 /* Copies the status of the emulator inside the buffer, the provided buffer 

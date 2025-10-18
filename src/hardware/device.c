@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "device.h"
 #include "debugger.h"
 
@@ -147,31 +148,7 @@ void InitializeBootROM() {
     }
 }
 
-bool InitializeGameROM(char *romPath) {
-    FILE *program = fopen(romPath, "rb");
-    size_t program_length;
-    if(program){
-        fseek(program, 0, SEEK_END);
-        program_length = ftell(program);
-        fseek(program, 0, SEEK_SET);
-        fread(device.memory, program_length, 1, program);
-        fclose(program);
-
-        device.cartridge.title = (char *)(&device.memory[0x0134]); 
-        printf("Cartridge title: %s\n", device.cartridge.title);
-        device.cartridge.type = cartridge_types[device.memory[0x0147]];
-        if (device.cartridge.title) {
-            printf("Cartridge type: %s\n", device.cartridge.type);
-        } else {
-            printf("Cartridge type: Unknown (0x%02X)\n", device.memory[0x0147]);
-        }
-
-        device.romPath = romPath;
-        return true;
-    }
-    return false;
-}
-
+    
 
 void create_dummy_header() {
     // This is the correct, official Nintendo logo A

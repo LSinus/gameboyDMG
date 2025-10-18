@@ -256,7 +256,11 @@ int main(int argc, char **argv){
     InitializeInstructionTable();
     InitializePowerOnState();
     InitializeBootROM();
-    InitializeGameROM(argv[1]);
+    if(!InitializeCartridge(argv[1])){
+        printf("[ERROR] Initialize cartridge failed\n");
+        return 1;
+    }
+    PrintCartridgeInfo();
 
     mutex = SDL_CreateMutex();
     

@@ -5,12 +5,20 @@
 #include "timer.h"
 #include "joypad.h"
 #include "device.h"
+#include "cartridge.h"
 
 extern DEVICE device;
 
 void WriteMem(uint16_t addr, uint8_t data){
-    // memory banks of cartridge ROM so not writable
-    if(addr <= 0x7FFF) return; 
+
+    /* If address belongs to the cartridge call 
+     * WriteToCartridge in order to manage coorectly
+     * the MBC if present
+     */
+    if(addr <= 0x7FFF) {
+        WriteToCartridge(addr, data);
+        return;
+    } 
     
     uint8_t ppu_mode = ppu_get_mode();
 
@@ -112,6 +120,11 @@ uint8_t ReadMem(uint16_t addr){
             if (device.joypad.start)  P1 &= ~0x08; // Bit 3 (Start)
         }
         return P1;
+    }
+
+    // MBC logic, cartridge manages the reads from there
+    if(addr <= 0x7FFF){
+        return ReadFromCartridge(addr);
     }
 
     return device.memory[addr];
