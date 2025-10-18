@@ -111,7 +111,9 @@ void PrintCartridgeInfo(){
 
     
 uint8_t ReadFromCartridge(uint16_t addr){
-    if(addr >= 0x4000){
+    uint8_t number_of_banks = device.cartridge.ROMsize / 16; // Each ROM bank is 16 KiB //
+
+    if(number_of_banks > 2 && addr >= 0x4000){
         //printf("read from bank %d, at base address: 0x%04X, offset: 0x%04X\n", device.cartridge.ROMnumber, device.cartridge.ROMnumber << 15, addr);
         return device.cartridge.data[(device.cartridge.ROMnumber * 0x4000) + (addr - 0x4000)];
     }
