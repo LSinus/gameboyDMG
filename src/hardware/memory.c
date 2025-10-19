@@ -6,6 +6,7 @@
 #include "joypad.h"
 #include "device.h"
 #include "cartridge.h"
+#include "serial.h"
 
 extern DEVICE device;
 
@@ -125,6 +126,11 @@ uint8_t ReadMem(uint16_t addr){
     // MBC logic, cartridge manages the reads from there
     if(addr <= 0x7FFF){
         return ReadFromCartridge(addr);
+    }
+
+    // Serial port transfer logic
+    if(addr == 0xFF01){
+        return ReadFromSerialPort();
     }
 
     return device.memory[addr];

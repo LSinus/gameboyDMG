@@ -46,7 +46,7 @@ void GetEmulatorStatusFile(char* buf){
     emulator_disassemble(device.cpu.PC, tmp, sizeof(tmp));
     uint8_t lcdc = device.memory[0xFF40];
     char enable = (lcdc & 0x80) == 0 ? '-' : '+';
-    sprintf(buf, "A:%02x F:%s BC:%04x DE:%04x HL:%04x SP:%04x PC:%04x ppu:%c%u LY:%u |%s\n", a, formatted_f_reg, device.cpu.BC, device.cpu.DE, device.cpu.HL, device.cpu.SP, device.cpu.PC, enable, ppu_get_mode(), device.ppu.ly, tmp);
+    sprintf(buf, "A:%02x F:%s BC:%04x DE:%04x HL:%04x SP:%04x PC:%04x ppu:%c%u LY:%u |%s    [$ff93]: %02x\n", a, formatted_f_reg, device.cpu.BC, device.cpu.DE, device.cpu.HL, device.cpu.SP, device.cpu.PC, enable, ppu_get_mode(), device.ppu.ly, tmp, device.memory[0xff93]);
 }
 
 /* This function allows the cpu to correctly handle interrupts */
@@ -119,6 +119,10 @@ void InitializePowerOnState(){
     device.ppu.mode = MODE_2_OAM_SCAN;
     device.ppu.cycle_counter = 0;
     device.ppu.ly = 0;
+
+    // Initialize Serial port 
+    device.serial_port.cycles_elapsed = 0;
+    device.serial_port.transfer_in_progress = false;
 
     // Initialize I/O registers
     device.memory[0xFF00] = 0xCF; // Joypad input

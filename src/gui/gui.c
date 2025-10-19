@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "../../external/microui.h"
 #include "renderer.h"
@@ -47,7 +48,9 @@ static void debug_window(mu_Context *ctx) {
             memset(device.memory, 0, 65536);
             InitializePowerOnState();
             InitializeBootROM();
-            InitializeGameROM(device.romPath);
+            free(device.cartridge.data); // TODO create a shutdown function for cartridge
+            InitializeCartridge(device.cartridge.gamePath);
+            PrintCartridgeInfo();
         }
 
         mu_layout_end_column(ctx);
@@ -132,7 +135,8 @@ static void load_rom_window(mu_Context *ctx){
     }
     if (mu_button(ctx, "Load")) { submitted = 1; }
     if (submitted) {
-        if(InitializeGameROM(buf)){
+        free(device.cartridge.data); // TODO shutdown function for cartridge
+        if(InitializeCartridge(buf)){
             memset(device.memory, 0, 65536);
             InitializePowerOnState();
             InitializeBootROM();

@@ -153,8 +153,11 @@ void logEmulatorSatus(){
         exit(1);
     }
     char buf[128];
-    GetEmulatorStatusFile(buf);
-    fprintf(logger, buf);
+    memset(buf, 0, 128);
+    if(!device.cpu.halted){
+        GetEmulatorStatusFile(buf);
+        fprintf(logger, buf);
+    }
 }
 #endif
 
@@ -208,7 +211,8 @@ void logEmulatorSatus(){
             ppu_step(cycles_executed);
             timer_step(cycles_executed);
             dma_step(cycles_executed);
-
+            serial_step(cycles_executed);
+            
             // DEBUG INFO Written to serial data output by tests printend on console
             if(device.memory[0xFF01] >= 0 && device.memory[0xFF01] <= 127 && device.memory[0xFF02] == 0x81){
                 printf("%c",device.memory[0xFF01]);

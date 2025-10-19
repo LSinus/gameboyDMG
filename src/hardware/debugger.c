@@ -1,4 +1,5 @@
 #include "debugger.h"
+#include "cartridge.h"
 
 extern DEVICE device;
 
@@ -158,8 +159,21 @@ static int disassemble_instr(uint8_t data[3], char* buffer, size_t size) {
 int emulator_disassemble(uint16_t addr, char* buffer, size_t size) {
   char instr[120];
   char hex[][3] = {"  ", "  ", "  "};
+  
+  uint8_t data[3];
+  
+  if(addr <= 0x7FFF){
+     data[0] = ReadFromCartridge(addr);
+     data[1] = ReadFromCartridge(addr + 1);
+     data[2] = ReadFromCartridge(addr + 2);
 
-  uint8_t data[3] = {device.memory[addr], device.memory[addr + 1], device.memory[addr + 2 ]};
+  }
+  else {
+     data[0] = device.memory[addr];
+     data[1] = device.memory[addr + 1];
+     data[2] = device.memory[addr + 2];
+  }
+
   int num_bytes = disassemble_instr(data, instr, sizeof(instr));
 
   snprintf(buffer, size, "[%s]%#06x: %s", "00", addr, instr);

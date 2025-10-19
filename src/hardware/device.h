@@ -8,6 +8,7 @@
 #include "memory.h"
 #include "timer.h"
 #include "cartridge.h"
+#include "serial.h"
 
 typedef struct {
     CPU cpu;
@@ -16,6 +17,7 @@ typedef struct {
     TIMER timer;
     DMA dma;
 
+    SERIAL_PORT serial_port;
     CARTRIDGE cartridge;
 
     bool boot_rom_enabled;

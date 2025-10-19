@@ -15,9 +15,9 @@ if(UNIX)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/external/SDL_ttf-release-2.24.0/external
         RESULT_VARIABLE result
     )
-    if(NOT result EQUAL 0)
-        message(FATAL_ERROR "Dependency installation failed")
-    endif()
+#if(NOT result EQUAL 0)
+        #        message(FATAL_ERROR "Dependency installation failed")
+        #   endif()
 elseif(WIN32)
     execute_process(
         COMMAND powershell -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/external/SDL_ttf-release-2.24.0/external/Get-GitModules.ps1"
@@ -51,13 +51,31 @@ add_executable(gameboy
 				 src/hardware/ppu.c 
 				 src/hardware/timer.c 
 				 src/hardware/joypad.c 
+                 src/hardware/serial.c
+				 src/hardware/device.c 
+				 src/hardware/cartridge.c 
+                 src/hardware/debugger.c
+				 src/gameboy.c
+                 external/SDL_FontCache.c
+                 external/microui.c	   
+
+			) 
+add_executable(gameboy_debugger
+ 				 src/gui/renderer.c 
+				 src/gui/gui.c 
+				 src/hardware/cpu.c 
+				 src/hardware/memory.c 
+				 src/hardware/ppu.c 
+                 src/hardware/serial.c
+				 src/hardware/timer.c 
+				 src/hardware/joypad.c 
 				 src/hardware/device.c 
 				 src/hardware/cartridge.c 
 				 src/hardware/debugger.c 
 				 src/gameboy.c
 				 external/SDL_FontCache.c
-				 external/microui.c
-			) 
+                 external/microui.c	   
+    )
 #find_package(OpenGL REQUIRED COMPONENTS OpenGL)
 #add_dependencies(gameboy OpenGL::OpenGL)
 
@@ -65,12 +83,17 @@ add_subdirectory(external/SDL-release-2.32.8 EXCLUDE_FROM_ALL)
 add_subdirectory(external/SDL_ttf-release-2.24.0 EXCLUDE_FROM_ALL)
 
 target_link_libraries(gameboy PRIVATE SDL2 SDL2_ttf)
+target_link_libraries(gameboy_debugger PRIVATE SDL2 SDL2_ttf)
+
+target_compile_definitions(gameboy_debugger PRIVATE DEBUGGER_MODE=1)
 
 if(WIN32)
 	target_link_libraries(gameboy PRIVATE SDL2main)
+	target_link_libraries(gameboy_debugger PRIVATE SDL2main)
 endif()
 
 target_include_directories(gameboy PRIVATE external/SDL-release-2.23.8/include external/SDL_ttf-release-2.24.0)
+target_include_directories(gameboy_debugger PRIVATE external/SDL-release-2.23.8/include external/SDL_ttf-release-2.24.0)
 
 
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/bootroms DESTINATION ${CMAKE_BINARY_DIR})
