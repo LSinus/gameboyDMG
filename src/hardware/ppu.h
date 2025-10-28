@@ -8,7 +8,7 @@
 #define WINDOW_WIDTH 160 
 #define WINDOW_HEIGHT 144
 
-#define SCALE_FACTOR 5 // Output window scale factor
+#define SCALE_FACTOR 3 // Output window scale factor
 
 #define USER_WINDOW_WIDTH WINDOW_WIDTH * SCALE_FACTOR
 #define USER_WINDOW_HEIGHT WINDOW_HEIGHT * SCALE_FACTOR

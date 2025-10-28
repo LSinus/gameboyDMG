@@ -181,7 +181,7 @@ void ppu_scanline(){
                     uint8_t x_in_tile = x - (obj[1] - 8); 
 
                     if(x_flip) x_in_tile = 7 - x_in_tile;       
-                    if(y_flip) y_in_tile = 7 - y_in_tile;
+                    //if(y_flip) y_in_tile = 7 - y_in_tile; TODO check the correctness of flipping for y axis
 
                     // check priority 0 = high, 1 = low
                     bool priority = (obj[3] & 0x80) == 0; 
@@ -328,7 +328,7 @@ void ppu_step(int cycles){
                 }
             }
             break;
-        case MODE_1_VBLANK:
+        /*case MODE_1_VBLANK:
             if (device.ppu.ly == 153 && device.ppu.cycle_counter >= 4) {
                 device.ppu.ly = 0;
                 device.memory[0xFF44] = device.ppu.ly;
@@ -351,6 +351,22 @@ void ppu_step(int cycles){
                 device.memory[0xFF44] = device.ppu.ly;
 
                 
+            }
+            break;*/
+        case MODE_1_VBLANK:
+            if (device.ppu.cycle_counter >= 456) { // One scanline worth of time
+                device.ppu.cycle_counter -= 456;
+                device.ppu.ly++;
+                device.memory[0xFF44] = device.ppu.ly;
+
+                if (device.ppu.ly > 153) {
+                    device.ppu.ly = 0;
+                    device.memory[0xFF44] = 0;
+                    ppu_set_mode(MODE_2_OAM_SCAN);
+                    ppu_oam_scan();
+                    // check if in STAT an interrupt for this event has to be requested
+                    if((STAT & 0x20) != 0) device.memory[IF_REG] |= 0x02; // request STAT interrupt
+                }
             }
             break;
     }

@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdbool.h>
 
+#define SAVES_PATH "saves/"
+
 /* The data pointer points to a dinamically allocated 
  * memory buffer in wich all the data contained in the 
  * rom file of the cartridge is copied at the beginning
@@ -12,6 +14,7 @@
  */
 typedef struct CARTRIDGE{
     uint8_t *data;
+    uint8_t *RAM;
     char *gamePath;
     const char *title;
     const char *type;
@@ -19,8 +22,11 @@ typedef struct CARTRIDGE{
     // Sizes are specified in KiB
     uint16_t ROMsize;
     uint16_t RAMsize;
+    bool RAMEnabled;
     // This number indicates the current selected rom bank if any
     uint8_t ROMnumber;
+    // This number indicates the current selected ram bank if any
+    uint8_t RAMnumber;
 } CARTRIDGE;
 
 /* Cartridge ROM type */
@@ -50,6 +56,8 @@ uint8_t ReadFromCartridge(uint16_t addr);
  * used in the cartridge
  * */
 void WriteToCartridge(uint16_t addr, uint8_t data);
+void WriteToExternalRAM(uint16_t addr, uint8_t data);
+uint8_t ReadFromExternalRAM(uint16_t addr);
 
 uint16_t get_rom_size();
 uint16_t get_ram_size();

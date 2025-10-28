@@ -12,6 +12,7 @@ extern DEVICE device;
 
 void WriteMem(uint16_t addr, uint8_t data){
 
+    WriteToExternalRAM(addr, data);
     /* If address belongs to the cartridge call 
      * WriteToCartridge in order to manage coorectly
      * the MBC if present
@@ -131,6 +132,10 @@ uint8_t ReadMem(uint16_t addr){
     // Serial port transfer logic
     if(addr == 0xFF01){
         return ReadFromSerialPort();
+    }
+
+    if(addr >= 0xA000 && addr <= 0xBFFF){
+        return ReadFromExternalRAM(addr);
     }
 
     return device.memory[addr];

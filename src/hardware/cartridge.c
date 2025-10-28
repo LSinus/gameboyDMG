@@ -2,6 +2,15 @@
 #include "device.h"
 
 #include <stdlib.h>
+#include <errno.h>
+#include <ctype.h>
+
+#ifndef WIN32
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#endif  
 
 extern DEVICE device;
 
@@ -46,6 +55,36 @@ const uint16_t cartridge_rom_sizes[8] = {
     [0x05] = 64
 };
 
+/* This is a utility function used to calculate the
+ * path of the save for the loaded game. It is on behalf of
+ * the caller to ensure that the buffer has enough space
+ * allocated
+ */
+static void get_save_path(char *save_path){
+    char title_len = strlen(device.cartridge.title);
+    memcpy(save_path, SAVES_PATH, sizeof(SAVES_PATH));
+    memcpy(&save_path[sizeof(SAVES_PATH)-1], device.cartridge.title, title_len);
+    save_path[sizeof(SAVES_PATH) - 1 + title_len] = '.';
+    save_path[sizeof(SAVES_PATH) - 1 + title_len + 1] = 'b';
+    save_path[sizeof(SAVES_PATH) - 1 + title_len + 2] = 'i';
+    save_path[sizeof(SAVES_PATH) - 1 + title_len + 3] = 'n';
+}
+
+bool check_dir_exists_or_create(char *save_path){
+    DIR* dir = opendir(SAVES_PATH);
+    if (dir) {
+        closedir(dir);
+        return true;
+    } else if (ENOENT == errno) {
+        if(mkdir(SAVES_PATH, 0700) == -1){
+            return false;
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
+
 bool InitializeCartridge(char *game_path){
     device.cartridge.gamePath = game_path;
     
@@ -72,14 +111,76 @@ bool InitializeCartridge(char *game_path){
     device.cartridge.title = (char *)(&device.cartridge.data[0x0134]); 
     device.cartridge.type = cartridge_types[device.cartridge.data[0x0147]];
     device.cartridge.ROMsize = 32 * (1 << device.cartridge.data[0x148]);
+
     if(strstr(device.cartridge.type, "RAM") != NULL){
         device.cartridge.RAMsize = cartridge_rom_sizes[device.cartridge.data[0x149]];
+        printf("[INFO] RAM size: %d\n", device.cartridge.RAMsize);
+
+#ifndef WIN32
+        if(strstr(device.cartridge.type, "BATTERY")){
+            char save_path[100];
+            get_save_path(save_path);
+
+            printf("SAVE FILE PATH: %s\n", save_path);
+
+            if(!check_dir_exists_or_create(SAVES_PATH)){
+                perror("[ERROR] creating saves directory:");
+                return false;
+            }
+            FILE *save = fopen(save_path, "a+b");
+
+            if(!save){
+                perror("[ERROR] opening save file");
+                return false;
+            }
+
+            // THIS IMPLEMENTATION WORKS ONLY ON UNIX-LIKE SYSTEMS
+            int save_fd = fileno(save);
+            if(ftruncate(save_fd, device.cartridge.RAMsize * 0x0400) == -1){
+                perror("[ERROR] resizing save file");
+                return false;
+            }
+            device.cartridge.RAM = mmap(NULL, device.cartridge.RAMsize * 0x0400, PROT_READ | PROT_WRITE, MAP_SHARED, save_fd, 0);
+            if(device.cartridge.RAM == MAP_FAILED){
+                perror("[ERROR] mapping save file to memory");
+                return false;
+            }
+
+            fclose(save);
+
+            printf("[INFO] mapped ram with values: \n");
+            for(int i = 0; i < device.cartridge.RAMsize * 0x0400; i++){
+                if(i%128 == 0){
+                    printf("\n");
+                }
+                if(isprint(device.cartridge.RAM[i])){
+                    putchar(device.cartridge.RAM[i]);
+                }
+                else{
+                    putchar('.');
+                }
+
+            }
+            printf("\n");
+            
+        }
+        else{
+            device.cartridge.RAM = malloc(device.cartridge.RAMsize);
+        }
+#else
+        // TODO implement a proper save file map on win32
+        device.cartridge.RAM = malloc(device.cartridge.RAMsize);
+#endif
+        if(!device.cartridge.RAM){
+            return false;
+        }
     }
     else{
         device.cartridge.RAMsize = 0;
     }   
+    device.cartridge.RAMEnabled = false;
     
-    return true;
+   return true;
 }
 
 void PrintCartridgeInfo(){
@@ -94,13 +195,13 @@ void PrintCartridgeInfo(){
     }
 
 
-    if(cart->ROMsize % 1000 != 0){
+    if(cart->ROMsize / 1000 != 0){
         printf("Rom size: %d MiB\n", cart->ROMsize % 1000);
     }
     else {
         printf("Rom size: %d KiB\n", cart->ROMsize);
     }
-    if(cart->RAMsize % 1000 != 0){
+    if(cart->RAMsize / 1000 != 0){
         printf("Ram size: %d MiB\n", cart->RAMsize % 1000);
     }
     else {
@@ -152,9 +253,37 @@ void WriteToCartridge(uint16_t addr, uint8_t data){
         if (device.cartridge.ROMnumber == 0) device.cartridge.ROMnumber = 1;
         //printf("Rom bank selected: %d\n", device.cartridge.ROMnumber);
     }
+}
 
-
+uint8_t ReadFromExternalRAM(uint16_t addr){
+    if (device.cartridge.RAMEnabled == true){
+        printf("[INFO] Read from external RAM at: 0x%04X; current selected bank: 0x%02X\n", addr, device.cartridge.RAMnumber);
+        
+        uint8_t data = device.cartridge.RAM[(device.cartridge.RAMnumber * 0x2000) + (addr - 0xA000)];
+        printf("[INFO] Read: 0x%02x\n", data);
+        return data;
+    }
+    else {
+        return 0xFF;
+    }
 
 }
 
+void WriteToExternalRAM(uint16_t addr, uint8_t data){
+    if(addr <= 0x1FFF){
+        if((data & 0x0F) == 0x0A) device.cartridge.RAMEnabled = true;
+        else device.cartridge.RAMEnabled = false;
+        return;
+    }
+    if(device.cartridge.RAMEnabled && addr >= 0xA000 && addr <= 0xBFFF){
+        //Write into ram
+        printf("[INFO] Writing into external RAM at: 0x%04X with value: 0x%02x\n", addr, data);
+        device.cartridge.RAM[(device.cartridge.RAMnumber * 0x2000) + (addr - 0xA000)] = data;
+    }
+    if(addr >= 0x4000 && addr <= 0x5FFF){
+        // select RAM bank
+        device.cartridge.RAMnumber = data;
+        printf("[INFO] RAM BANK selected: 0x%02X\n", data);
+    }
 
+}
