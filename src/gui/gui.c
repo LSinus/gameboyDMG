@@ -17,7 +17,7 @@ extern DEVICE device;
 /* ---- MICROUI STUFF ---- */
 mu_Context ctx = {0};
 float bg[3] = { 90, 95, 100 };
-static char buffer[128] = {0};
+static char buffer[4096] = {0};
 
 
 int gui_text_width(mu_Font font, const char *text, int len) {
@@ -29,10 +29,30 @@ int gui_text_height(mu_Font font) {
     return r_get_text_height();
 }
 
+static void slow_clock_setting(mu_Context *ctx) {
+    static char slow_freq_buf[255];
+    bool submitted = false;
+    mu_layout_row(ctx, 2, (int[]) { -70, -1 }, 0);
+    if (mu_textbox(ctx, slow_freq_buf, sizeof(slow_freq_buf)) & MU_RES_SUBMIT) {
+        mu_set_focus(ctx, ctx->last_id);
+        submitted = true;
+    }
+
+    const char* slow_text = device.cpu.slowed ? "Std clock" : "Slow clock";
+    if(mu_button(ctx, slow_text)){
+        submitted = true;
+    }
+    if(submitted) {
+        uint64_t freq = strtoll(slow_freq_buf, NULL, 10);
+        if(freq != 0) device.cpu.slowed_at = freq;
+        device.cpu.slowed = ! device.cpu.slowed;
+    }
+}
 static void debug_window(mu_Context *ctx) {
-    if (mu_begin_window(ctx, "Debug infos", mu_rect(10, 10, 300, 450))) {
+    if (mu_begin_window(ctx, "Debug info", mu_rect(10, 10, 300, 450))) {
+        GetEmulatorStatus(buffer, sizeof(buffer));
         mu_Container *win = mu_get_current_container(ctx);
-        win->rect.w = mu_max(win->rect.w, 300);
+        win->rect.w = mu_max(win->rect.w, 320);
         win->rect.h = mu_max(win->rect.h, 450);
         mu_layout_row(ctx, 1, (int[]) { -1 }, -100);
         mu_begin_panel(ctx, "CPU status");
@@ -56,18 +76,18 @@ static void debug_window(mu_Context *ctx) {
         mu_layout_end_column(ctx);
         mu_layout_begin_column(ctx);
 
-        GetEmulatorStatus(buffer);
 
         const char* halt_text = device.cpu.halted ? "De-Halt CPU" : "Halt CPU";
         if(mu_button(ctx, halt_text)){
             device.cpu.halted = !device.cpu.halted;
         }
 
-        const char* slow_text = device.cpu.slowed ? "Std clock" : "Slow clock";
-        if(mu_button(ctx, slow_text)){
-            device.cpu.slowed = ! device.cpu.slowed;
+        if(mu_button(ctx, "load state")){
+            InitializeCustomState("file.stat");
         }
+
         
+        slow_clock_setting(ctx);
         mu_layout_end_column(ctx);  
         mu_end_window(ctx);
     }
@@ -162,7 +182,7 @@ static void load_rom_window(mu_Context *ctx){
 }
 
 static void gameboy_window(mu_Context *ctx){
-    if (mu_begin_window(ctx, "Gameboy Window", mu_rect(350, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
+    if (mu_begin_window(ctx, "Gameboy Window", mu_rect(340, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
         mu_Container *win = mu_get_current_container(ctx);
         mu_Rect r = mu_rect(win->body.x,win->body.y, win->body.w, win->body.h);
         mu_draw_image(ctx, r, framebuffer);
@@ -171,7 +191,7 @@ static void gameboy_window(mu_Context *ctx){
 }
 
 static void tiledata_window(mu_Context *ctx){
-    if (mu_begin_window(ctx, "Tile data", mu_rect(350, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
+    if (mu_begin_window(ctx, "Tile data", mu_rect(340 + 20 + USER_WINDOW_WIDTH, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
         mu_Container *win = mu_get_current_container(ctx);
         mu_Rect r = mu_rect(win->body.x,win->body.y, win->body.w, win->body.h);
         mu_draw_image(ctx, r, tiledata);

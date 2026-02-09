@@ -27,13 +27,14 @@ typedef struct {
 } DEVICE;
 
 void InitializePowerOnState();
+void InitializeCustomState(const char *state_file_path);
 void InitializeBootROM();
 void create_dummy_header();
 int handleInterrupts();
 /* Copies the status of the emulator inside the buffer, the provided buffer 
    must be at least 82 bytes
 */
-void GetEmulatorStatus(char* buf);
-void GetEmulatorStatusFile(char* buf);
+void GetEmulatorStatus(char* buf, size_t buf_size);
+void GetEmulatorStatusFile(char* buf, size_t buf_size);
 
 #endif 

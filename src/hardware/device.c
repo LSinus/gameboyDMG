@@ -1,14 +1,44 @@
 #include <stdlib.h>
 #include "device.h"
 #include "debugger.h"
+#include <unistd.h>
+
+#define ST_FILE_HEADER "LSGBSTATFILEHDR"
+#define advance(n)\
+    do{\
+    (*stat_buf) += n;\
+    (*stat_size) -= n;\
+    } while(0)
 
 DEVICE device = {0};
 
+static void ppu_get_string_mode(char *ppu_mode) {
+    switch(device.ppu.mode) {
+        case MODE_0_HBLANK:   strcpy(ppu_mode, "HBLANK");   ppu_mode[6] = 0; break;
+        case MODE_1_VBLANK:   strcpy(ppu_mode, "VBLANK");   ppu_mode[6] = 0; break;
+        case MODE_2_OAM_SCAN: strcpy(ppu_mode, "OAM_SCAN"); ppu_mode[8] = 0; break;
+        case MODE_3_DRAWING:  strcpy(ppu_mode, "DRAWING");  ppu_mode[7] = 0; break;
+    }
+}
+
+static void interrupts_get_string_stat(char *buf, size_t buf_size) {
+    uint8_t ie = device.memory[IE_REG];
+    uint8_t _if = device.memory[IF_REG]; 
+
+    snprintf(buf, buf_size,
+            "IME: %s\n"
+            "      [J] [S] [T] [L] [V]\n"
+            "IE:    %d   %d   %d   %d   %d\n"
+            "IF:    %d   %d   %d   %d   %d",
+            device.cpu.IME ? "ON" : "OFF",
+            (ie >> 4) & 1, (ie >> 3) & 1, (ie >> 2) & 1, (ie >> 1) & 1, ie & 1,
+            (_if >> 4) & 1, (_if >> 3) & 1, (_if >> 2) & 1, (_if >> 1) & 1, _if & 1);
+}
 
 /* Copies the status of the emulator inside the buffer, the provided buffer 
    must be at least 82 bytes
 */
-void GetEmulatorStatus(char* buf){
+void GetEmulatorStatus(char* buf, size_t buf_size){
     uint8_t a =  device.cpu.AF >> 8;
     uint8_t f = (device.cpu.AF & 0xFF);
     uint8_t b =  device.cpu.BC >> 8;
@@ -18,20 +48,55 @@ void GetEmulatorStatus(char* buf){
     uint8_t h =  device.cpu.HL >> 8;
     uint8_t l = (device.cpu.HL & 0xFF);
 
-    char formatted_f_reg[5] = {0};
-    for(int i = 0; i<4; i++){
-        formatted_f_reg[i] = '-';
-    }
+    char formatted_f_reg[5] = {'-', '-', '-', '-', 0};
 
-    if(f & 0b1000) formatted_f_reg[0] = 'Z';
-    if(f & 0b0100) formatted_f_reg[1] = 'N';
-    if(f & 0b0010) formatted_f_reg[2] = 'H';
-    if(f & 0b0001) formatted_f_reg[3] = 'C';
+    if(f & 0x80) formatted_f_reg[0] = 'Z';
+    if(f & 0x40) formatted_f_reg[1] = 'N';
+    if(f & 0x20) formatted_f_reg[2] = 'H';
+    if(f & 0x10) formatted_f_reg[3] = 'C';
 
-    sprintf(buf, "A 0x%02x F 0x%02x B 0x%02X C: 0x%02X D: 0x%02X E: 0x%02X H: 0x%02X L: 0x%02X\nSP: 0x%04X PC: 0x%04X\n(%02X %02X %02X %02X)\n Halted: %d    Stopped: %d", a, f, b, c, d, e, h, l, device.cpu.SP, device.cpu.PC, ReadMem(device.cpu.PC), ReadMem(device.cpu.PC+1), ReadMem(device.cpu.PC+2), ReadMem(device.cpu.PC+3), device.cpu.halted, !device.cpu.running);
+    char interrupts_stat[256] = {0};
+    interrupts_get_string_stat(interrupts_stat, sizeof(interrupts_stat));
+
+    char ppu_mode[50] = {0};
+    ppu_get_string_mode(ppu_mode);
+
+    char tmp[64];
+    emulator_disassemble(device.cpu.PC, tmp, sizeof(tmp));
+
+    snprintf(buf, buf_size, 
+            "CPU:\n" 
+            "A 0x%02x B 0x%02X C: 0x%02X D: 0x%02X E: 0x%02X H: 0x%02X L: 0x%02X\nSP: 0x%04X PC: 0x%04X\n"
+            "F %s\n"
+            "Next opcodes: (%02X %02X %02X %02X)\n"
+            "Instruction: \n "
+            "%s\n\n"
+            "Halted: %d    Stopped: %d\n"
+            "\n"
+            "Interrupts:\n"
+            "%s\n"
+            "\n"
+            "PPU:\n"
+            "mode:%s \n"
+            "ly:%u"
+            "\n\n"
+            "DMA:\n"
+            "status: %s\n"
+            "cycles: %llu",
+            a, b, c, d, e, h, l, device.cpu.SP, device.cpu.PC, 
+            formatted_f_reg,
+            ReadMem(device.cpu.PC), ReadMem(device.cpu.PC+1), ReadMem(device.cpu.PC+2), ReadMem(device.cpu.PC+3), 
+            tmp,
+            device.cpu.halted, !device.cpu.running,
+            interrupts_stat,
+            ppu_mode,
+            device.ppu.ly,
+            device.dma.running ? "active" : "not active",
+            device.dma.cycles
+            );
 }
 
-void GetEmulatorStatusFile(char* buf){
+void GetEmulatorStatusFile(char* buf, size_t buf_size){
     uint8_t a =  device.cpu.AF >> 8;
     uint8_t f = (device.cpu.AF & 0xFF);
 
@@ -46,7 +111,9 @@ void GetEmulatorStatusFile(char* buf){
     emulator_disassemble(device.cpu.PC, tmp, sizeof(tmp));
     uint8_t lcdc = device.memory[0xFF40];
     char enable = (lcdc & 0x80) == 0 ? '-' : '+';
-    sprintf(buf, "A:%02x F:%s BC:%04x DE:%04x HL:%04x SP:%04x PC:%04x ppu:%c%u LY:%u |%s    [$ff93]: %02x\n", a, formatted_f_reg, device.cpu.BC, device.cpu.DE, device.cpu.HL, device.cpu.SP, device.cpu.PC, enable, ppu_get_mode(), device.ppu.ly, tmp, device.memory[0xff93]);
+    snprintf(buf, buf_size,"A:%02x F:%s BC:%04x DE:%04x HL:%04x SP:%04x PC:%04x ppu:%c%u LY:%u |%s    [$ff93]: %02x\n",
+            a, formatted_f_reg, device.cpu.BC, device.cpu.DE, device.cpu.HL, device.cpu.SP, device.cpu.PC, 
+            enable, ppu_get_mode(), device.ppu.ly, tmp, device.memory[0xff93]);
 }
 
 /* This function allows the cpu to correctly handle interrupts */
@@ -95,6 +162,7 @@ int handleInterrupts(){
         device.cpu.PC = 0x0058;
     } else if (requested & 0x10) { // Joypad
         device.memory[IF_REG] &= ~0x10;
+        printf("joypad interrupt cleared\n");
         device.cpu.PC = 0x0060;
     }
 
@@ -102,24 +170,12 @@ int handleInterrupts(){
 }
 
 void InitializePowerOnState(){
-    device.cpu.PC = 0x0000;
-    device.cpu.SP = 0x0000;
-    device.cpu.AF = 0x0000;
-    device.cpu.BC = 0x0000;
-    device.cpu.DE = 0x0000;
-    device.cpu.HL = 0x0000;
-    
-    device.cpu.halted = false;
-    device.cpu.running = true;
-    device.cpu.IME = false;
-
+    InitializeCPU(); 
     device.boot_rom_enabled = true;
 
     // Initialize PPU state properly
-    device.ppu.mode = MODE_2_OAM_SCAN;
-    device.ppu.cycle_counter = 0;
-    device.ppu.ly = 0;
-
+    InitializePPU();
+    
     // Initialize Serial port 
     device.serial_port.cycles_elapsed = 0;
     device.serial_port.transfer_in_progress = false;
@@ -169,4 +225,121 @@ void create_dummy_header() {
 
     // A valid header checksum. The boot ROM also verifies this.
     device.memory[0x014D] = 0xEA;
+}
+
+/* ==================== LOAD DYNAMIC STATE FROM A SAVED ONE =============================== */
+/* This functionality is present for debugging purposes, loading a predetermined hardware 
+ * state allow for easier tracing operation, to discover bugs and differences from well
+ * known working emulators.
+*/
+
+static bool skip_nl(uint8_t **stat_buf, size_t *stat_size) {
+    if(*stat_size > 0 && (**stat_buf) == '\n') advance(1);
+    return true;
+}
+static bool match_cpu(uint8_t **stat_buf, size_t *stat_size) {
+    if((*stat_size) < 3 || memcmp(*stat_buf, "CPU", 3) != 0) return false; 
+    advance(3);
+    skip_nl(stat_buf, stat_size);
+
+    char z, n, h, c;
+    if((*stat_size) < 5 || sscanf(*(const char **)stat_buf, "A:%hhx ", (uint8_t*)&device.cpu.AF + 1) != 1) return false;
+    advance(5);
+    printf("CHECK\n");
+
+    if((*stat_size) < 7 || sscanf(*(const char **)stat_buf, "F:%c%c%c%c ", &z, &n, &h, &c) != 4) return false; 
+    advance(7);
+
+    if(z == 'Z') device.cpu.AF |= 0x80;
+    else device.cpu.AF &= ~0x80;
+    
+    if(n == 'N') device.cpu.AF |= 0x40;
+    else device.cpu.AF &= ~0x40;
+    
+    if(h == 'H') device.cpu.AF |= 0x20;
+    else device.cpu.AF &= ~0x20;
+
+    if(c == 'C') device.cpu.AF |= 0x10;
+    else device.cpu.AF &= ~0x10;
+
+    
+    if((*stat_size) < 39 || sscanf(*(const char **)stat_buf, "BC:%hx DE:%hx HL:%hx SP:%hx PC:%hx", 
+                &device.cpu.BC, 
+                &device.cpu.DE, 
+                &device.cpu.HL, 
+                &device.cpu.SP, 
+                &device.cpu.PC) != 5) return false;
+   advance(39);
+   skip_nl(stat_buf, stat_size);
+
+   device.cpu.halted = true; // Decide what to do here
+
+   return true;
+}
+
+static bool match_header(uint8_t **stat_buf, size_t *stat_size) {
+    size_t hd_len = strlen(ST_FILE_HEADER);
+    printf("%s\n", *(char **)stat_buf);
+    if(*stat_size >= hd_len && memcmp(*stat_buf, ST_FILE_HEADER, hd_len) == 0) {
+        advance(hd_len);
+        skip_nl(stat_buf, stat_size);
+        return true;
+    }
+    return false;
+}
+
+static bool parse_stat(uint8_t *stat_buf, size_t stat_size) {
+    if(!match_header(&stat_buf, &stat_size)){
+        printf("Error incorrect format for hw snapshot file\n");
+        return false;
+    }
+    if(!match_cpu(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: cpu\n");
+        return false;
+    }
+/*    if(!match_ppu(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: ppu\n");
+        return;
+    if(!match_interrupts(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: interrupts\n");
+        return;
+    if(!match_timer(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: timer\n");
+        return;
+    if(!match_dma(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: dma\n");
+        return;
+    if(!match_cartridge(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: cartridge\n");
+        return;
+    if(!match_memory(&stat_buf, &stat_size)){
+        printf("Error incorrect state file at: memory\n");
+        return;*/
+    return true;
+}
+
+void InitializeCustomState(const char *state_file_path){
+    FILE *stat_file = fopen(state_file_path, "r");
+    if(!stat_file) {
+        printf("Error: status file not found!\n");
+        return;
+    }
+
+    fseek(stat_file, 0, SEEK_END);
+    size_t stat_size = ftell(stat_file);
+    fseek(stat_file, 0, SEEK_SET);
+
+    uint8_t *stat_buf = malloc(stat_size);
+    if(!stat_buf) {
+        printf("Buy more memory lol!\n");
+        return;
+    }
+
+    fread(stat_buf, stat_size, 1, stat_file);
+    fclose(stat_file);
+
+    if(parse_stat(stat_buf, stat_size)){
+        printf("State file loaded succesfully\n");
+    } 
+    free(stat_buf);
 }

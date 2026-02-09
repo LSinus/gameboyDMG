@@ -19,7 +19,22 @@ void print_cpu_state(CPU *cpu) {
 }*/
 
 
-
+void InitializeCPU() {
+    device.cpu.PC = 0x0000;
+    device.cpu.SP = 0x0000;
+    device.cpu.AF = 0x0000;
+    device.cpu.BC = 0x0000;
+    device.cpu.DE = 0x0000;
+    device.cpu.HL = 0x0000;
+    
+    device.cpu.halted = false;
+    device.cpu.running = true;
+    device.cpu.IME = false;
+#ifdef DEBUGGER_MODE
+    device.cpu.slowed = false;
+    device.cpu.slowed_at = CLOCK_FREQ_HZ; 
+#endif
+}
 
 /* ---- FUNCTION POINTERS FOR OPCODES SECTION ---- */
 int UNKNOWN(CPU *cpu){

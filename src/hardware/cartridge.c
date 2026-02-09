@@ -114,7 +114,7 @@ bool InitializeCartridge(char *game_path){
 
     if(strstr(device.cartridge.type, "RAM") != NULL){
         device.cartridge.RAMsize = cartridge_rom_sizes[device.cartridge.data[0x149]];
-        printf("[INFO] RAM size: %d\n", device.cartridge.RAMsize);
+        //printf("[INFO] RAM size: %d\n", device.cartridge.RAMsize);
 
 #ifndef WIN32
         if(strstr(device.cartridge.type, "BATTERY")){
@@ -148,7 +148,7 @@ bool InitializeCartridge(char *game_path){
 
             fclose(save);
 
-            printf("[INFO] mapped ram with values: \n");
+            /*printf("[INFO] mapped ram with values: \n");
             for(int i = 0; i < device.cartridge.RAMsize * 0x0400; i++){
                 if(i%128 == 0){
                     printf("\n");
@@ -162,7 +162,7 @@ bool InitializeCartridge(char *game_path){
 
             }
             printf("\n");
-            
+           */ 
         }
         else{
             device.cartridge.RAM = malloc(device.cartridge.RAMsize);
@@ -257,10 +257,10 @@ void WriteToCartridge(uint16_t addr, uint8_t data){
 
 uint8_t ReadFromExternalRAM(uint16_t addr){
     if (device.cartridge.RAMEnabled == true){
-        printf("[INFO] Read from external RAM at: 0x%04X; current selected bank: 0x%02X\n", addr, device.cartridge.RAMnumber);
+        //printf("[INFO] Read from external RAM at: 0x%04X; current selected bank: 0x%02X\n", addr, device.cartridge.RAMnumber);
         
         uint8_t data = device.cartridge.RAM[(device.cartridge.RAMnumber * 0x2000) + (addr - 0xA000)];
-        printf("[INFO] Read: 0x%02x\n", data);
+        //printf("[INFO] Read: 0x%02x\n", data);
         return data;
     }
     else {
@@ -277,13 +277,13 @@ void WriteToExternalRAM(uint16_t addr, uint8_t data){
     }
     if(device.cartridge.RAMEnabled && addr >= 0xA000 && addr <= 0xBFFF){
         //Write into ram
-        printf("[INFO] Writing into external RAM at: 0x%04X with value: 0x%02x\n", addr, data);
+        //printf("[INFO] Writing into external RAM at: 0x%04X with value: 0x%02x\n", addr, data);
         device.cartridge.RAM[(device.cartridge.RAMnumber * 0x2000) + (addr - 0xA000)] = data;
     }
     if(addr >= 0x4000 && addr <= 0x5FFF){
         // select RAM bank
         device.cartridge.RAMnumber = data;
-        printf("[INFO] RAM BANK selected: 0x%02X\n", data);
+        //printf("[INFO] RAM BANK selected: 0x%02X\n", data);
     }
 
 }

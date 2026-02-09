@@ -53,7 +53,7 @@ void WriteMem(uint16_t addr, uint8_t data){
     }
 
 
-    if(addr == 0xFF44) return; // LY is not writable
+    if(addr == LY_REG) return; // LY is not writable
 
     if(addr == 0xFF50){
         device.boot_rom_enabled = false; // Disable the boot ROM
@@ -80,7 +80,8 @@ uint8_t ReadMem(uint16_t addr){
     // check for dma running
     if(device.dma.running){
         if(addr < 0xFF80 || addr > 0xFFFE){
-            return 0xFF;
+            // TODO re-enable this to ensure correct DMA behavior after fixing timing issue
+            //return 0xFF;
         }
     }
 

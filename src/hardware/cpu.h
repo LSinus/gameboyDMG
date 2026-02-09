@@ -27,6 +27,7 @@ typedef struct CPU {
 
 #ifdef DEBUGGER_MODE
     bool slowed;
+    uint64_t slowed_at; // frequency of the slowed emulation
 #endif
 } CPU;
 
@@ -39,5 +40,6 @@ extern Instruction instruction_table[256];
 /* Look-up table of function pointers for CB-prefixed instructions */
 extern Instruction cb_instruction_table[256];
 
+void InitializeCPU();
 void InitializeInstructionTable();
 #endif

@@ -28,6 +28,9 @@ extern DEVICE device;
 /* This function will be transformed in a callback for the final user in order 
    to display data to the screen */
 void process_frame_buffer(int x, int y, uint8_t color){
+    if(y <= 1 && device.ppu.debug){
+        printf("Frame buffer at x = %d y = %d color = %d\n", x, y, color);
+    }
     uint32_t final_color;
     switch(color){
         case 0x00: final_color = 0xFFFFFFFF; break;
@@ -59,6 +62,12 @@ void process_input(SDL_Event *event){
         case SDLK_w:    if(is_pressed && !device.joypad.up)     button_just_pressed = true; device.joypad.up     = is_pressed; break;
         case SDLK_a:    if(is_pressed && !device.joypad.left)   button_just_pressed = true; device.joypad.left   = is_pressed; break;
         case SDLK_d:    if(is_pressed && !device.joypad.right)  button_just_pressed = true; device.joypad.right  = is_pressed; break;
+
+        // Section for enabling or disabling layers rendered by ppu 
+        case SDLK_1:    if(is_pressed) device.ppu.bg_enabled = !device.ppu.bg_enabled; break;
+        case SDLK_2:    if(is_pressed) device.ppu.wn_enabled = !device.ppu.wn_enabled; break;
+        case SDLK_3:    if(is_pressed) device.ppu.ob_enabled = !device.ppu.ob_enabled; break;
+        case SDLK_p:    if(is_pressed) device.ppu.debug = !device.ppu.debug; break;
     }
 
     if(button_just_pressed){ // Request joypad interrupt
@@ -155,99 +164,96 @@ void logEmulatorSatus(){
     char buf[128];
     memset(buf, 0, 128);
     if(!device.cpu.halted){
-        GetEmulatorStatusFile(buf);
-        fprintf(logger, buf);
+        GetEmulatorStatusFile(buf, sizeof(buf));
+        fprintf(logger, "%*s", (int)sizeof(buf), buf);
     }
 }
 #endif
 
-		SDL_mutex *mutex;
-		SDL_Event event;
+SDL_mutex *mutex;
+SDL_Event event;
 
-		void EmulatorLoop(){
-           
-			uint64_t start_time = 0, end_time, sleep_duration_ms;
+void EmulatorLoop(){
+    uint64_t start_time = 0, end_time, sleep_duration_ms;
 
-			while(device.cpu.running){
-				SDL_LockMutex(mutex);
-				
-				start_time = SDL_GetTicks64();
-				int cycles_this_frame = 0;
+    while(device.cpu.running){
+        SDL_LockMutex(mutex);
 
-				#ifndef DEBUGGER_MODE
-				SDL_Event event;
-				while (SDL_PollEvent(&event)) {
-					process_input(&event);
-				}
-				#endif
+        start_time = SDL_GetTicks64();
+        int cycles_this_frame = 0;
 
-
-				#ifdef DEBUGGER_MODE 
-				size_t clock_limit = device.cpu.slowed ? 1 : CYCLES_PER_FRAME;
-				while (cycles_this_frame < clock_limit && device.cpu.running){
-				//while (cycles_this_frame <  && device.cpu.running){
-				#else
-				while (cycles_this_frame < CYCLES_PER_FRAME && device.cpu.running){
-				#endif
-					int cycles_executed = 0;
-
-					// First, check if an interrupt needs to be serviced.
-					cycles_executed += handleInterrupts();
-				
-                #ifdef DEBUGGER_MODE
-                    if(!device.boot_rom_enabled) logEmulatorSatus();
-                #endif
-
-            if (device.cpu.halted) {
-                cycles_executed += 4;
-            } else {
-                uint8_t opcode = FetchByte(); 
-                //printf("instruction code executed: 0x%02X\n", opcode);
-                cycles_executed = instruction_table[opcode](&(device.cpu));
-            }
-
-            cycles_this_frame += cycles_executed;
-
-            ppu_step(cycles_executed);
-            timer_step(cycles_executed);
-            dma_step(cycles_executed);
-            serial_step(cycles_executed);
-            
-            // DEBUG INFO Written to serial data output by tests printend on console
-            if(device.memory[0xFF01] >= 0 && device.memory[0xFF01] <= 127 && device.memory[0xFF02] == 0x81){
-                printf("%c",device.memory[0xFF01]);
-                device.memory[0xFF02] = 0;
-            }
+#ifndef DEBUGGER_MODE
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            process_input(&event);
         }
-        SDL_UnlockMutex(mutex);
+#endif
 
-        #ifndef DEBUGGER_MODE
+
+#ifdef DEBUGGER_MODE 
+        size_t clock_limit = device.cpu.slowed ? device.cpu.slowed_at : CYCLES_PER_FRAME;
+        while (cycles_this_frame < clock_limit && device.cpu.running){
+#else
+        while (cycles_this_frame < CYCLES_PER_FRAME && device.cpu.running){
+#endif
+                int cycles_executed = 0;
+                // First, check if an interrupt needs to be serviced.
+                cycles_executed += handleInterrupts();
+
+#ifdef DEBUGGER_MODE
+                if(!device.boot_rom_enabled) logEmulatorSatus();
+#endif
+
+                if (device.cpu.halted) {
+                    cycles_executed += 4;
+                } else {
+                    uint8_t opcode = FetchByte(); 
+                    //printf("instruction code executed: 0x%02X\n", opcode);
+                    cycles_executed = instruction_table[opcode](&(device.cpu));
+                }
+
+                cycles_this_frame += cycles_executed;
+
+                ppu_step(cycles_executed);
+                timer_step(cycles_executed);
+                dma_step(cycles_executed);
+                serial_step(cycles_executed);
+
+                // DEBUG INFO Written to serial data output by tests printend on console
+                if(device.memory[0xFF01] >= 0 && device.memory[0xFF01] <= 127 && device.memory[0xFF02] == 0x81){
+                    printf("%c",device.memory[0xFF01]);
+                    device.memory[0xFF02] = 0;
+                }
+            }
+            SDL_UnlockMutex(mutex);
+
+#ifndef DEBUGGER_MODE
             r_clear(mu_color(0, 0, 0, 255));
             mu_Rect r = mu_rect(0,0,USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT);
             r_draw_image(r, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT, (const uint32_t *)framebuffer);
             r_present();
-        #endif
+#endif
 
-        end_time = SDL_GetTicks64();
-        sleep_duration_ms = MILLIS_PER_FRAME - (end_time - start_time);
+            end_time = SDL_GetTicks64();
 
-        if (sleep_duration_ms > 0) {
-            #ifdef DEBUGGER_MODE
+#ifdef DEBUGGER_MODE
             if(device.cpu.slowed){
-                SDL_Delay(sleep_duration_ms + 500);
+                sleep_duration_ms = (1000/(double)(device.cpu.slowed_at)) - (end_time - start_time);
             }
             else{
+                sleep_duration_ms = MILLIS_PER_FRAME - (end_time - start_time);
+            }
+#else
+            sleep_duration_ms = MILLIS_PER_FRAME - (end_time - start_time);
+#endif
+            if (sleep_duration_ms > 0) {
                 SDL_Delay(sleep_duration_ms);
             }
-            #else
-            SDL_Delay(sleep_duration_ms);
-            #endif
-        }
 
-        inspect_tile_data();
-        
-    }
-}
+            inspect_tile_data();
+
+        }
+        }
 
 
 int main(int argc, char **argv){
@@ -271,7 +277,7 @@ int main(int argc, char **argv){
     #ifdef DEBUGGER_MODE
         InitializeLogger(&logger);
         SDL_Thread *thread = SDL_CreateThread((SDL_ThreadFunction)EmulatorLoop, "EmulationThread", NULL);
-        r_init("Gameboy Debugger", USER_WINDOW_WIDTH*2, USER_WINDOW_HEIGHT+200,  "fonts/DejaVuSans.ttf");
+        r_init("Gameboy Debugger", USER_WINDOW_WIDTH*3, USER_WINDOW_HEIGHT+200,  "fonts/DejaVuSans.ttf");
         mu_init(&ctx);
         ctx.text_width = gui_text_width;
         ctx.text_height = gui_text_height;
