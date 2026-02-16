@@ -135,6 +135,14 @@ void mu_init(mu_Context *ctx) {
 }
 
 
+void mu_post_reload(mu_Context *ctx) {
+    ctx->draw_frame = draw_frame;
+    ctx->_style = default_style;
+    ctx->style = &ctx->_style;
+
+}
+
+
 void mu_begin(mu_Context *ctx) {
   expect(ctx->text_width && ctx->text_height);
   ctx->command_list.idx = 0;

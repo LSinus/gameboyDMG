@@ -6,8 +6,11 @@
 #define ST_FILE_HEADER "LSGBSTATFILEHDR"
 #define advance(n)\
     do{\
-    (*stat_buf) += n;\
-    (*stat_size) -= n;\
+        if(*hwsnap_size < n) printf("Error: Unexpected end of file\n");\
+        else{\
+            (*hwsnap_buf) += n;\
+                           (*hwsnap_size) -= n;\
+        }\
     } while(0)
 
 DEVICE device = {0};
@@ -233,22 +236,31 @@ void create_dummy_header() {
  * known working emulators.
 */
 
-static bool skip_nl(uint8_t **stat_buf, size_t *stat_size) {
-    if(*stat_size > 0 && (**stat_buf) == '\n') advance(1);
-    return true;
+static void skip_nl(uint8_t **hwsnap_buf, size_t *hwsnap_size) {
+    bool c = true;
+    while(c) {
+        if(**hwsnap_buf == '\n') {
+            advance(1);
+            // For safe windows newlines
+            if(**hwsnap_buf == '\r') {
+                advance(1);
+            }
+        }
+        else c = false;
+    }
 }
-static bool match_cpu(uint8_t **stat_buf, size_t *stat_size) {
-    if((*stat_size) < 3 || memcmp(*stat_buf, "CPU", 3) != 0) return false; 
+static bool match_cpu(uint8_t **hwsnap_buf, size_t *hwsnap_size) {
+    if(memcmp(*hwsnap_buf, "CPU", 3) != 0) return false; 
     advance(3);
-    skip_nl(stat_buf, stat_size);
+    skip_nl(hwsnap_buf, hwsnap_size);
 
     char z, n, h, c;
-    if((*stat_size) < 5 || sscanf(*(const char **)stat_buf, "A:%hhx ", (uint8_t*)&device.cpu.AF + 1) != 1) return false;
-    advance(5);
-    printf("CHECK\n");
+    int offset;
+    if(sscanf(*(const char **)hwsnap_buf, "A:%hhx %n", (uint8_t*)&device.cpu.AF + 1, &offset) != 1) return false;
+    advance(offset);
 
-    if((*stat_size) < 7 || sscanf(*(const char **)stat_buf, "F:%c%c%c%c ", &z, &n, &h, &c) != 4) return false; 
-    advance(7);
+    if(sscanf(*(const char **)hwsnap_buf, "F:%c%c%c%c %n", &z, &n, &h, &c, &offset) != 4) return false; 
+    advance(offset);
 
     if(z == 'Z') device.cpu.AF |= 0x80;
     else device.cpu.AF &= ~0x80;
@@ -263,83 +275,143 @@ static bool match_cpu(uint8_t **stat_buf, size_t *stat_size) {
     else device.cpu.AF &= ~0x10;
 
     
-    if((*stat_size) < 39 || sscanf(*(const char **)stat_buf, "BC:%hx DE:%hx HL:%hx SP:%hx PC:%hx", 
+    if(sscanf(*(const char **)hwsnap_buf, "BC:%hx DE:%hx HL:%hx SP:%hx PC:%hx%n", 
                 &device.cpu.BC, 
                 &device.cpu.DE, 
                 &device.cpu.HL, 
                 &device.cpu.SP, 
-                &device.cpu.PC) != 5) return false;
-   advance(39);
-   skip_nl(stat_buf, stat_size);
+                &device.cpu.PC,
+                &offset) != 5) return false;
+   advance(offset);
+   skip_nl(hwsnap_buf, hwsnap_size);
 
    device.cpu.halted = true; // Decide what to do here
 
    return true;
 }
 
-static bool match_header(uint8_t **stat_buf, size_t *stat_size) {
+static bool match_ppu(uint8_t **hwsnap_buf, size_t *hwsnap_size) {
+    if(memcmp(*hwsnap_buf, "PPU", 3) != 0) return false; 
+    advance(3);
+    skip_nl(hwsnap_buf, hwsnap_size);
+    
+    int ppu_mode, ly, offset;
+    if(sscanf(*(const char **)hwsnap_buf, "mode:+%d LY:%u%n", &ppu_mode, &ly, &offset) != 2) return false; 
+    ppu_set_mode(ppu_mode);
+    ppu_set_ly(ly);
+
+    advance(offset);
+    skip_nl(hwsnap_buf, hwsnap_size);
+
+    return true;
+}
+
+static bool match_timer(uint8_t **hwsnap_buf, size_t *hwsnap_size) {
+    if(memcmp(*hwsnap_buf, "TIMER", 5) != 0) return false; 
+    advance(5);
+    skip_nl(hwsnap_buf, hwsnap_size);
+    
+    int offset;
+    if(sscanf(*(const char **)hwsnap_buf, "div counter:%llu%n", &device.timer.div_cycle_counter,  &offset) != 1) return false; 
+    advance(offset);
+    skip_nl(hwsnap_buf, hwsnap_size);
+    
+    if(sscanf(*(const char **)hwsnap_buf, "tima counter:%llu%n", &device.timer.tima_cycle_counter, &offset) != 1) return false; 
+    advance(offset);
+    skip_nl(hwsnap_buf, hwsnap_size);
+
+    return true;
+}
+
+
+
+static bool match_interrupts(uint8_t **hwsnap_buf, size_t *hwsnap_size) {
+    if(memcmp(*hwsnap_buf, "INTERRUPTS", sizeof("INTERRUPTS") - 1) != 0) return false; 
+    advance(sizeof("INTERRUPTS") - 1);
+    skip_nl(hwsnap_buf, hwsnap_size);
+
+    int offset;
+    if(sscanf(*(const char **)hwsnap_buf, "ie:%hhx%n", &device.memory[IE_REG], &offset) != 2) return false; 
+    advance(offset);
+    skip_nl(hwsnap_buf, hwsnap_size);
+    if(sscanf(*(const char **)hwsnap_buf, "if:%hhx%n", &device.memory[IF_REG], &offset) != 2) return false; 
+    advance(offset);
+    skip_nl(hwsnap_buf, hwsnap_size);
+    if(sscanf(*(const char **)hwsnap_buf, "IME:%hhu%n", &device.cpu.IME, &offset) != 2) return false; 
+    advance(offset);
+    skip_nl(hwsnap_buf, hwsnap_size);
+
+    return true;
+}
+
+static bool match_header(uint8_t **hwsnap_buf, size_t *hwsnap_size) {
     size_t hd_len = strlen(ST_FILE_HEADER);
-    printf("%s\n", *(char **)stat_buf);
-    if(*stat_size >= hd_len && memcmp(*stat_buf, ST_FILE_HEADER, hd_len) == 0) {
+    printf("%s\n", *(char **)hwsnap_buf);
+    if(*hwsnap_size >= hd_len && memcmp(*hwsnap_buf, ST_FILE_HEADER, hd_len) == 0) {
         advance(hd_len);
-        skip_nl(stat_buf, stat_size);
+        skip_nl(hwsnap_buf, hwsnap_size);
         return true;
     }
     return false;
 }
 
-static bool parse_stat(uint8_t *stat_buf, size_t stat_size) {
-    if(!match_header(&stat_buf, &stat_size)){
+static bool parse_hwsnap(uint8_t *hwsnap_buf, size_t hwsnap_size) {
+    if(!match_header(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect format for hw snapshot file\n");
         return false;
     }
-    if(!match_cpu(&stat_buf, &stat_size)){
+    if(!match_cpu(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: cpu\n");
         return false;
     }
-/*    if(!match_ppu(&stat_buf, &stat_size)){
+    if(!match_ppu(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: ppu\n");
-        return;
-    if(!match_interrupts(&stat_buf, &stat_size)){
+        return false;
+    }
+    if(!match_interrupts(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: interrupts\n");
-        return;
-    if(!match_timer(&stat_buf, &stat_size)){
+        return false;
+    }
+        /*
+    if(!match_timer(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: timer\n");
         return;
-    if(!match_dma(&stat_buf, &stat_size)){
+    if(!match_dma(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: dma\n");
         return;
-    if(!match_cartridge(&stat_buf, &stat_size)){
+    if(!match_cartridge(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: cartridge\n");
         return;
-    if(!match_memory(&stat_buf, &stat_size)){
+    if(!match_memory(&hwsnap_buf, &hwsnap_size)){
         printf("Error incorrect state file at: memory\n");
         return;*/
     return true;
 }
 
-void InitializeCustomState(const char *state_file_path){
-    FILE *stat_file = fopen(state_file_path, "r");
-    if(!stat_file) {
+void InitializeHWSnapshot(const char *hwsnap_file_path){
+    FILE *hwsnap_file = fopen(hwsnap_file_path, "r");
+    if(!hwsnap_file) {
         printf("Error: status file not found!\n");
         return;
     }
 
-    fseek(stat_file, 0, SEEK_END);
-    size_t stat_size = ftell(stat_file);
-    fseek(stat_file, 0, SEEK_SET);
+    fseek(hwsnap_file, 0, SEEK_END);
+    size_t hwsnap_size = ftell(hwsnap_file);
+    fseek(hwsnap_file, 0, SEEK_SET);
 
-    uint8_t *stat_buf = malloc(stat_size);
-    if(!stat_buf) {
+    uint8_t *hwsnap_buf = malloc(hwsnap_size + 1);
+    if(!hwsnap_buf) {
         printf("Buy more memory lol!\n");
+        fclose(hwsnap_file);
         return;
     }
 
-    fread(stat_buf, stat_size, 1, stat_file);
-    fclose(stat_file);
+    fread(hwsnap_buf, hwsnap_size, 1, hwsnap_file);
+    hwsnap_buf[hwsnap_size] = 0; // Null termination for safe sscanf 
+    fclose(hwsnap_file);
 
-    if(parse_stat(stat_buf, stat_size)){
+    if(parse_hwsnap(hwsnap_buf, hwsnap_size)){
         printf("State file loaded succesfully\n");
     } 
-    free(stat_buf);
+    free(hwsnap_buf);
 }

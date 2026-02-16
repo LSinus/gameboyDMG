@@ -63,6 +63,7 @@ add_executable(gameboy
 add_executable(gameboy_debugger
  				 src/gui/renderer.c 
 				 src/gui/gui.c 
+				 src/gui/gui_hotreload_posix.c 
 				 src/hardware/cpu.c 
 				 src/hardware/memory.c 
 				 src/hardware/ppu.c 
@@ -76,24 +77,55 @@ add_executable(gameboy_debugger
 				 external/SDL_FontCache.c
                  external/microui.c	   
     )
-#find_package(OpenGL REQUIRED COMPONENTS OpenGL)
-#add_dependencies(gameboy OpenGL::OpenGL)
+
+add_library(gui SHARED 
+    src/gui/gui.c 
+    src/gui/renderer.c 
+    external/SDL_FontCache.c
+    external/microui.c
+)
+target_link_libraries(gui PRIVATE SDL2 SDL2_ttf)
+target_compile_definitions(gui PRIVATE DEBUGGER_MODE=1)
+set_target_properties(gui PROPERTIES PREFIX "lib" SUFFIX ".so")
+
+add_executable(gameboy_debugger_hotreload
+				 src/hardware/cpu.c 
+				 src/hardware/memory.c 
+				 src/hardware/ppu.c 
+                 src/hardware/serial.c
+				 src/hardware/timer.c 
+				 src/hardware/joypad.c 
+				 src/hardware/device.c 
+				 src/hardware/cartridge.c 
+				 src/hardware/debugger.c 
+				 src/gameboy.c
+                 src/gui/gui_hotreload_posix.c 
+    )
+
+set_target_properties(gameboy_debugger_hotreload PROPERTIES ENABLE_EXPORTS TRUE)
+if(APPLE)
+    target_link_libraries(gameboy_debugger_hotreload PRIVATE "-Wl,-export_dynamic")
+endif()
 
 add_subdirectory(external/SDL-release-2.32.8 EXCLUDE_FROM_ALL)
 add_subdirectory(external/SDL_ttf-release-2.24.0 EXCLUDE_FROM_ALL)
 
 target_link_libraries(gameboy PRIVATE SDL2 SDL2_ttf)
 target_link_libraries(gameboy_debugger PRIVATE SDL2 SDL2_ttf)
+target_link_libraries(gameboy_debugger_hotreload PRIVATE SDL2 SDL2_ttf)
 
 target_compile_definitions(gameboy_debugger PRIVATE DEBUGGER_MODE=1)
+target_compile_definitions(gameboy_debugger_hotreload PRIVATE DEBUGGER_MODE=1 DEBUGGER_HOTRELOAD=1)
 
 if(WIN32)
 	target_link_libraries(gameboy PRIVATE SDL2main)
 	target_link_libraries(gameboy_debugger PRIVATE SDL2main)
+	target_link_libraries(gameboy_debugger_hotreload PRIVATE SDL2main)
 endif()
 
 target_include_directories(gameboy PRIVATE external/SDL-release-2.23.8/include external/SDL_ttf-release-2.24.0)
 target_include_directories(gameboy_debugger PRIVATE external/SDL-release-2.23.8/include external/SDL_ttf-release-2.24.0)
+target_include_directories(gameboy_debugger_hotreload PRIVATE external/SDL-release-2.23.8/include external/SDL_ttf-release-2.24.0)
 
 
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/bootroms DESTINATION ${CMAKE_BINARY_DIR})

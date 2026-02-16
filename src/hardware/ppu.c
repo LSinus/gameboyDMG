@@ -269,8 +269,7 @@ void ppu_scanline(){
         /* --- SECTION FOR WINDOW LAYER --- */
         if(is_wn_enabled() && is_wn_visible(x)){
             wn_color_number = ppu_scanline_wn(x);
-            /* Now based on the color number it is possible to get the right value from BG palette window uses same palette of bg */
-            color = (BGP >> (wn_color_number * 2)) & 0x03;
+            /* Now based on the color number it is possible to get the right value from BG palette window uses same palette of bg */ color = (BGP >> (wn_color_number * 2)) & 0x03;
         }
 
         /* --- SECTION FOR SPRITES --- */
@@ -350,7 +349,7 @@ void ppu_scanline(){
                 }  
 
             }}
-    
+        
         if(device.ppu.process_frame_buffer){
             device.ppu.process_frame_buffer(x, device.ppu.ly, color);
         }

@@ -1,4 +1,8 @@
-/* Gameboy emulator by Leonardo Sinibaldi Started 19th July 2025. */
+/* Copyright (c) Leonardo Sinibaldi 2025-2026
+ * Gameboy emulator sarted 19th July 2025.   
+ */
+
+#include "gui/renderer.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -14,8 +18,12 @@
 #include "hardware/device.h"
 
 #include "../external/microui.h"
-#include "gui/renderer.h"
-#include "gui/gui.h"
+#include "gui/gui_hotreload.h"
+#include <dlfcn.h>
+
+#ifdef DEBUGGER_MODE 
+#include <dlfcn.h>
+#endif
 
 #define FRAME_RATE_HZ 59.7
 #define CYCLES_PER_FRAME (CLOCK_FREQ_HZ / FRAME_RATE_HZ)
@@ -25,26 +33,6 @@
 extern DEVICE device;
 
 
-/* This function will be transformed in a callback for the final user in order 
-   to display data to the screen */
-void process_frame_buffer(int x, int y, uint8_t color){
-    if(y <= 1 && device.ppu.debug){
-        printf("Frame buffer at x = %d y = %d color = %d\n", x, y, color);
-    }
-    uint32_t final_color;
-    switch(color){
-        case 0x00: final_color = 0xFFFFFFFF; break;
-        case 0x01: final_color = 0xC0C0C0C0; break;
-        case 0x02: final_color = 0x2C2C2C2C; break;
-        case 0x03: final_color = 0x00000000; break;
-    }
-
-    for(int i = 0; i<SCALE_FACTOR; i++){
-        for(int j=0; j<SCALE_FACTOR; j++){
-            framebuffer[SCALE_FACTOR*y+i][SCALE_FACTOR*x+j] = final_color;
-        }
-    }
-};
 
 void process_input(SDL_Event *event){
     
@@ -75,72 +63,6 @@ void process_input(SDL_Event *event){
     }
 }
 
-void create_tile_data_grid(){
-    for(int x=0; x<USER_WINDOW_WIDTH; x++){
-        for(int y=0; y<USER_WINDOW_HEIGHT; y++){
-            if(x % (8*SCALE_FACTOR) == 0 || y % (8*SCALE_FACTOR) == 0){
-                tiledata[y][x] = 0xFF0000FF;
-            }
-        }
-    }
-}
-
-void inspect_tile(int base_x, int base_y){
-    uint8_t byte1, byte2;
-    uint8_t bit_index;
-    uint8_t color_bit1, color_bit0;
-    uint8_t bg_color_number;
-    uint8_t BGP;
-    uint8_t color;
-
-    int offset = (base_x * 18 + base_y) * 8 * 2;
-
-    for (int y=0; y<8; y++){
-        byte1 = device.memory[0x8000 + offset + y*2];
-        byte2 = device.memory[0x8001 + offset + y*2];
-
-        for(int x=0; x<8; x++){
-            bit_index = 7 - (x % 8);
-
-            color_bit1 = (byte2 >> bit_index) & 1;
-            color_bit0 = (byte1 >> bit_index) & 1;
-
-            bg_color_number = (color_bit1 << 1) | color_bit0;
-
-            BGP = ReadMem(0xFF47); 
-            color = (BGP >> (bg_color_number * 2)) & 0x03;
-            
-
-            uint32_t final_color;
-            switch(color){
-                case 0x00: final_color = 0xFFFFFFFF; break;
-                case 0x01: final_color = 0xC0C0C0C0; break;
-                case 0x02: final_color = 0x2C2C2C2C; break;
-                case 0x03: final_color = 0x00000000; break;
-            }
-
-            for(int i = 0; i<SCALE_FACTOR; i++){
-                for(int j=0; j<SCALE_FACTOR; j++){
-                    tiledata[SCALE_FACTOR*(y+base_y*8)+i][SCALE_FACTOR*(x+base_x*8)+j] = final_color;
-                }
-            }
-
-        }
-    }
-}
-
-void inspect_tile_data(){
-    
-    for(int y = 0; y<18; y++){
-        for(int x = 0; x<20; x++){
-            inspect_tile(x, y);
-        }
-    }
-    create_tile_data_grid();
-}
-
-
-
 
 #ifdef DEBUGGER_MODE
 FILE *logger;
@@ -170,14 +92,14 @@ void logEmulatorSatus(){
 }
 #endif
 
-SDL_mutex *mutex;
+SDL_mutex *gui_mutex;
 SDL_Event event;
 
 void EmulatorLoop(){
     uint64_t start_time = 0, end_time, sleep_duration_ms;
 
     while(device.cpu.running){
-        SDL_LockMutex(mutex);
+        SDL_LockMutex(gui_mutex);
 
         start_time = SDL_GetTicks64();
         int cycles_this_frame = 0;
@@ -194,7 +116,7 @@ void EmulatorLoop(){
         size_t clock_limit = device.cpu.slowed ? device.cpu.slowed_at : CYCLES_PER_FRAME;
         while (cycles_this_frame < clock_limit && device.cpu.running){
 #else
-        while (cycles_this_frame < CYCLES_PER_FRAME && device.cpu.running){
+            while (cycles_this_frame < CYCLES_PER_FRAME && device.cpu.running){
 #endif
                 int cycles_executed = 0;
                 // First, check if an interrupt needs to be serviced.
@@ -225,13 +147,13 @@ void EmulatorLoop(){
                     device.memory[0xFF02] = 0;
                 }
             }
-            SDL_UnlockMutex(mutex);
+            SDL_UnlockMutex(gui_mutex);
 
 #ifndef DEBUGGER_MODE
-            r_clear(mu_color(0, 0, 0, 255));
-            mu_Rect r = mu_rect(0,0,USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT);
-            r_draw_image(r, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT, (const uint32_t *)framebuffer);
-            r_present();
+            /* It is safe to call directly this function because 
+             * for non debugger builds the gui is only statically linked
+             * */
+            gui_render();
 #endif
 
             end_time = SDL_GetTicks64();
@@ -249,20 +171,34 @@ void EmulatorLoop(){
             if (sleep_duration_ms > 0) {
                 SDL_Delay(sleep_duration_ms);
             }
-
-            inspect_tile_data();
-
         }
         }
 
+static GuiExternalInterface gui_ext = {0};
 
 int main(int argc, char **argv){
     if(argc <= 1){
-        fprintf(stderr, "[ERROR] Usage: ./gameboy <path-to-ROM>\n");
+        fprintf(stderr, "Error: Usage: %s <path-to-ROM>\n", argv[0]);
         exit(1);
     }
+/*
+    gui_ext.read_mem            = (uint8_t (*)(uint16_t))dlsym(RTLD_DEFAULT, "ReadMem");
+    gui_ext.write_mem           = (void (*)(uint16_t, uint8_t))dlsym(RTLD_DEFAULT, "WriteMem");
+    gui_ext.get_emulator_status = (void (*)(char*, size_t))dlsym(RTLD_DEFAULT, "GetEmulatorStatus");
+    gui_ext.restart_emulator    = (void (*)(void))dlsym(RTLD_DEFAULT, "InitializePowerOnState");
+    gui_ext.init_boot_rom       = (void (*)(void))dlsym(RTLD_DEFAULT, "InitializeBootROM");
+    gui_ext.init_cartridge      = (bool (*)(char*))dlsym(RTLD_DEFAULT, "InitializeCartridge");
+    gui_ext.print_cartridge_info = (void (*)(void))dlsym(RTLD_DEFAULT, "PrintCartridgeInfo");
+*/
+    gui_ext.read_mem            = ReadMem;
+    gui_ext.write_mem           = WriteMem;
+    gui_ext.get_emulator_status = GetEmulatorStatus;
+    gui_ext.restart_emulator    = InitializePowerOnState; 
+    gui_ext.init_boot_rom       = InitializeBootROM; 
+    gui_ext.init_cartridge      = InitializeCartridge;
+    gui_ext.print_cartridge_info = PrintCartridgeInfo; 
 
-    device.ppu.process_frame_buffer = process_frame_buffer;
+
     InitializeInstructionTable();
     InitializePowerOnState();
     InitializeBootROM();
@@ -272,69 +208,40 @@ int main(int argc, char **argv){
     }
     PrintCartridgeInfo();
 
-    mutex = SDL_CreateMutex();
+    gui_mutex = SDL_CreateMutex();
+#ifdef DEBUGGER_MODE
+    if (!reload_libgui()) exit(-1); 
+
+    gui_init("Gameboy Debugger", USER_WINDOW_WIDTH*3, USER_WINDOW_HEIGHT+400, 
+            "fonts/DejaVuSans.ttf", 
+            &device, 
+            &gui_ext,
+            gui_mutex);
+    InitializeLogger(&logger);
+    SDL_Thread *thread = SDL_CreateThread((SDL_ThreadFunction)EmulatorLoop, "EmulationThread", NULL);
     
-    #ifdef DEBUGGER_MODE
-        InitializeLogger(&logger);
-        SDL_Thread *thread = SDL_CreateThread((SDL_ThreadFunction)EmulatorLoop, "EmulationThread", NULL);
-        r_init("Gameboy Debugger", USER_WINDOW_WIDTH*3, USER_WINDOW_HEIGHT+200,  "fonts/DejaVuSans.ttf");
-        mu_init(&ctx);
-        ctx.text_width = gui_text_width;
-        ctx.text_height = gui_text_height;
-
-        while(1){
-            while (SDL_PollEvent(&event)) {
-                SDL_LockMutex(mutex);
-                process_input(&event);
-                SDL_UnlockMutex(mutex);
-
-                switch (event.type) {
-                    case SDL_QUIT: exit(EXIT_SUCCESS);
-                    case SDL_MOUSEMOTION: mu_input_mousemove(&ctx, event.motion.x, event.motion.y); break;
-                    case SDL_MOUSEWHEEL: mu_input_scroll(&ctx, 0, event.wheel.y * -30); break;
-                    case SDL_TEXTINPUT: mu_input_text(&ctx, event.text.text); break;
-
-                    case SDL_MOUSEBUTTONDOWN:
-                    case SDL_MOUSEBUTTONUP: {
-                    int b = button_map[event.button.button & 0xff];
-                    if (b && event.type == SDL_MOUSEBUTTONDOWN) { mu_input_mousedown(&ctx, event.button.x, event.button.y, b); }
-                    if (b && event.type ==   SDL_MOUSEBUTTONUP) { mu_input_mouseup(&ctx, event.button.x, event.button.y, b); }
-                    break;
-                    }
-
-                    case SDL_KEYDOWN:
-                    case SDL_KEYUP: {
-                    int c = key_map[event.key.keysym.sym & 0xff];
-                    if (c && event.type == SDL_KEYDOWN) { mu_input_keydown(&ctx, c); }
-                    if (c && event.type ==   SDL_KEYUP) { mu_input_keyup(&ctx, c);   }
-                    break;
-                    }
-                }
-                
+    while(true){
+        while (SDL_PollEvent(&event)) {
+            SDL_LockMutex(gui_mutex);
+            process_input(&event);
+            if(event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_h) {
+                void *state = gui_pre_reload();
+                if(!reload_libgui()) exit(-1);
+                gui_post_reload(state, &device, &gui_ext);
+                printf("gui_post_reload succesfully executed\n");
             }
-
-            r_clear(mu_color(bg[0], bg[1], bg[2], 255));
-            gui_process_frame(&ctx);
-
-            mu_Command *cmd = NULL;
-            while (mu_next_command(&ctx, &cmd)) {
-                switch (cmd->type) {
-                    case MU_COMMAND_TEXT: r_draw_text(cmd->text.str, cmd->text.pos, cmd->text.color); break;
-                    case MU_COMMAND_RECT: r_draw_rect(cmd->rect.rect, cmd->rect.color); break;
-                    case MU_COMMAND_IMAGE: r_draw_image(cmd->image.rect, cmd->image.rect.w, cmd->image.rect.h, cmd->image.framebuffer);break;
-                    case MU_COMMAND_ICON: r_draw_icon(cmd->icon.id, cmd->icon.rect, cmd->icon.color); break;
-                    case MU_COMMAND_CLIP: r_set_clip_rect(cmd->clip.rect); break;
-                }
-            }
-            r_present();
+            gui_process_event(&event);
+            SDL_UnlockMutex(gui_mutex);
         }
-        SDL_WaitThread(thread, 0);
-        EndLogger(&logger);
-    #else
-        r_init("Gameboy", USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT,  "fonts/DejaVuSans.ttf");
-        EmulatorLoop();
-    #endif
-    r_quit();
+        gui_render();
+    }
+    SDL_WaitThread(thread, 0);
+    EndLogger(&logger);
+#else
+    gui_init("Gameboy", USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT, "fonts/DejaVuSans.ttf", &device, &gui_ext, gui_mutex);
+    EmulatorLoop();
+#endif
+    gui_quit();
 
     return 0;
 }

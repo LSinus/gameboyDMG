@@ -27,7 +27,7 @@ typedef struct {
 } DEVICE;
 
 void InitializePowerOnState();
-void InitializeCustomState(const char *state_file_path);
+void InitializeHWSnapshot(const char *hwsnap_file_path);
 void InitializeBootROM();
 void create_dummy_header();
 int handleInterrupts();

@@ -13,8 +13,19 @@
 #define USER_WINDOW_WIDTH (WINDOW_WIDTH * SCALE_FACTOR)
 #define USER_WINDOW_HEIGHT (WINDOW_HEIGHT * SCALE_FACTOR)
 
+#define ppu_set_ly(n)\
+    do{\
+        device.ppu.ly = (n);\
+        device.memory[0xFF44] = (n);\
+    }while(0)
+
+#define ppu_increment_ly()\
+    ppu_set_ly(device.ppu.ly+1)
+
+
+
 typedef enum {
-    MODE_0_HBLANK,
+    MODE_0_HBLANK = 0,
     MODE_1_VBLANK,
     MODE_2_OAM_SCAN,
     MODE_3_DRAWING
