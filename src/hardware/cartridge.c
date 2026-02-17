@@ -68,6 +68,7 @@ static void get_save_path(char *save_path){
     save_path[sizeof(SAVES_PATH) - 1 + title_len + 1] = 'b';
     save_path[sizeof(SAVES_PATH) - 1 + title_len + 2] = 'i';
     save_path[sizeof(SAVES_PATH) - 1 + title_len + 3] = 'n';
+    save_path[sizeof(SAVES_PATH) - 1 + title_len + 4] = 0;
 }
 
 bool check_dir_exists_or_create(char *save_path){
@@ -86,12 +87,14 @@ bool check_dir_exists_or_create(char *save_path){
 }
 
 bool InitializeCartridge(char *game_path){
-    device.cartridge.gamePath = game_path;
+    device.cartridge.gamePath = strdup(game_path);
     
     size_t program_length;
     FILE *program = fopen(game_path, "rb");
 
     if(!program){
+        free(device.cartridge.gamePath);
+        device.cartridge.gamePath = NULL;
         return false;
     }
 
@@ -102,6 +105,7 @@ bool InitializeCartridge(char *game_path){
 
     if(!device.cartridge.data){
         fclose(program);
+        fprintf(stderr, "[CARTRDIGE] Error: buy more mem!\n");
         return false;
     }
 
@@ -118,10 +122,15 @@ bool InitializeCartridge(char *game_path){
 
 #ifndef WIN32
         if(strstr(device.cartridge.type, "BATTERY")){
-            char save_path[100];
-            get_save_path(save_path);
+            char *save_path = malloc(strlen(device.cartridge.gamePath) + 5);
+            if(!save_path) {
+                fprintf(stderr, "[CARTRIDGE] Error: buy more mem!\n");
+                exit(-1);
+            }
 
+            get_save_path(save_path);
             printf("SAVE FILE PATH: %s\n", save_path);
+
 
             if(!check_dir_exists_or_create(SAVES_PATH)){
                 perror("[ERROR] creating saves directory:");
@@ -147,6 +156,7 @@ bool InitializeCartridge(char *game_path){
             }
 
             fclose(save);
+            free(save_path);
 
             /*printf("[INFO] mapped ram with values: \n");
             for(int i = 0; i < device.cartridge.RAMsize * 0x0400; i++){
@@ -180,36 +190,74 @@ bool InitializeCartridge(char *game_path){
     }   
     device.cartridge.RAMEnabled = false;
     
-   return true;
+    return true;
 }
 
-void PrintCartridgeInfo(){
+bool ShutdownCartridge(void) {
+    free(device.cartridge.data);
+    device.cartridge.data = NULL;
+
+    if(strstr(device.cartridge.type, "RAM") != NULL){ 
+        if(strstr(device.cartridge.type, "BATTERY") != NULL){
+            if(munmap(device.cartridge.RAM, device.cartridge.RAMsize * 0x0400)){
+                fprintf(stderr, "[CARTRDIGE] Error: failed unmapping save file!\n");
+                return false;
+            };
+        }
+        else {
+            free(device.cartridge.RAM);
+        }
+        device.cartridge.RAM = NULL;
+    }
+
+    device.cartridge.ROMnumber = 0; 
+    device.cartridge.RAMnumber = 0;
+
+    free(device.cartridge.gamePath);
+    device.cartridge.gamePath = NULL;
+
+    return true;
+}
+
+void PrintCartridgeInfo(char *buf, size_t size) {
+    if (!buf || size == 0) return; 
+
     CARTRIDGE *cart = &device.cartridge;
+    size_t offset = 0;
 
-    if (cart->title) {
-        printf("Cartridge type: %s\n", cart->type);
-        printf("Cartridge title: %s\n", cart->title);
+    #define APPEND(...) do { \
+        int written = snprintf(buf + offset, size - offset, __VA_ARGS__); \
+        if (written > 0) { \
+            offset += (size_t)written; \
+            if (offset >= size) offset = size - 1; \
+        } \
+    } while (0)
+
+    if (cart->title && cart->type) {
+        APPEND("Cartridge type: %s\n"
+               "Cartridge title: %s\n", 
+               cart->type, cart->title);
+    } else if (cart->data) {
+        APPEND("Cartridge type: Unknown (0x%02X)\n", 
+               cart->data[0x0147]);
     } else {
-        printf("Cartridge type: Unknown (0x%02X)\n", cart->data[0x0147]);
-        return;
+        APPEND("Cartridge type: Unknown\n");
     }
 
-
-    if(cart->ROMsize / 1000 != 0){
-        printf("Rom size: %d MiB\n", cart->ROMsize % 1000);
-    }
-    else {
-        printf("Rom size: %d KiB\n", cart->ROMsize);
-    }
-    if(cart->RAMsize / 1000 != 0){
-        printf("Ram size: %d MiB\n", cart->RAMsize % 1000);
-    }
-    else {
-        printf("Ram size: %d KiB\n", cart->RAMsize);
+    if (cart->ROMsize >= 1024) {
+        APPEND("Rom size: %d MiB\n", cart->ROMsize / 1024);
+    } else {
+        APPEND("Rom size: %d KiB\n", cart->ROMsize);
     }
 
-}	
+    if (cart->RAMsize >= 1024) {
+        APPEND("Ram size: %d MiB\n", cart->RAMsize / 1024);
+    } else {
+        APPEND("Ram size: %d KiB\n", cart->RAMsize);
+    }
 
+    #undef APPEND
+}
     
 uint8_t ReadFromCartridge(uint16_t addr){
     uint8_t number_of_banks = device.cartridge.ROMsize / 16; // Each ROM bank is 16 KiB //

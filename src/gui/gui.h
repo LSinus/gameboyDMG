@@ -16,7 +16,8 @@ typedef struct {
     void    (*restart_emulator)(void);
     void    (*init_boot_rom)(void);
     bool    (*init_cartridge)(char *romPath);
-    void    (*print_cartridge_info)(void);
+    bool    (*shutdown_cartridge)(void);
+    void    (*print_cartridge_info)(char *buf, size_t size);
     
 } GuiExternalInterface;
 
@@ -25,7 +26,7 @@ typedef struct {
     FUNC(gui_init, void, const char *, int, int, const char*, DEVICE *, GuiExternalInterface *, SDL_mutex *) \
     FUNC(gui_process_event, void, SDL_Event *) \
     FUNC(gui_pre_reload, void*, void) \
-    FUNC(gui_post_reload, void, void *, DEVICE *, GuiExternalInterface *) \
+    FUNC(gui_post_reload, void, void *) \
     FUNC(gui_render, void, void) \
     FUNC(gui_process_framebuffer, void, int, int, uint8_t) \
     FUNC(gui_process_tiledata, void, ) \

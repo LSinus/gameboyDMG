@@ -62,7 +62,15 @@ uint8_t ReadFromExternalRAM(uint16_t addr);
 uint16_t get_rom_size();
 uint16_t get_ram_size();
 
-/* This function prints a formatted text with cartrdige infos */
-void PrintCartridgeInfo();
+/* This function deallocates buffers allocated during
+ * InitializeCartrdige function call, it is needed to
+ * call this before calling again the InitializeCartrdige
+ * in order to avoid memory leaks. On systems that support
+ * it, this function unmamps memory mapped saving files.
+ */
+bool ShutdownCartridge(void);
+
+/* This function returns a formatted text with cartrdige infos */
+void PrintCartridgeInfo(char *buf, size_t buf_size);
 
 #endif

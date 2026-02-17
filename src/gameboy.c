@@ -181,21 +181,14 @@ int main(int argc, char **argv){
         fprintf(stderr, "Error: Usage: %s <path-to-ROM>\n", argv[0]);
         exit(1);
     }
-/*
-    gui_ext.read_mem            = (uint8_t (*)(uint16_t))dlsym(RTLD_DEFAULT, "ReadMem");
-    gui_ext.write_mem           = (void (*)(uint16_t, uint8_t))dlsym(RTLD_DEFAULT, "WriteMem");
-    gui_ext.get_emulator_status = (void (*)(char*, size_t))dlsym(RTLD_DEFAULT, "GetEmulatorStatus");
-    gui_ext.restart_emulator    = (void (*)(void))dlsym(RTLD_DEFAULT, "InitializePowerOnState");
-    gui_ext.init_boot_rom       = (void (*)(void))dlsym(RTLD_DEFAULT, "InitializeBootROM");
-    gui_ext.init_cartridge      = (bool (*)(char*))dlsym(RTLD_DEFAULT, "InitializeCartridge");
-    gui_ext.print_cartridge_info = (void (*)(void))dlsym(RTLD_DEFAULT, "PrintCartridgeInfo");
-*/
-    gui_ext.read_mem            = ReadMem;
-    gui_ext.write_mem           = WriteMem;
-    gui_ext.get_emulator_status = GetEmulatorStatus;
-    gui_ext.restart_emulator    = InitializePowerOnState; 
-    gui_ext.init_boot_rom       = InitializeBootROM; 
-    gui_ext.init_cartridge      = InitializeCartridge;
+
+    gui_ext.read_mem             = ReadMem;
+    gui_ext.write_mem            = WriteMem;
+    gui_ext.get_emulator_status  = GetEmulatorStatus;
+    gui_ext.restart_emulator     = InitializePowerOnState; 
+    gui_ext.init_boot_rom        = InitializeBootROM; 
+    gui_ext.init_cartridge       = InitializeCartridge;
+    gui_ext.shutdown_cartridge   = ShutdownCartridge;
     gui_ext.print_cartridge_info = PrintCartridgeInfo; 
 
 
@@ -206,13 +199,15 @@ int main(int argc, char **argv){
         printf("[ERROR] Initialize cartridge failed\n");
         return 1;
     }
-    PrintCartridgeInfo();
+    char buf[500] = {0};
+    PrintCartridgeInfo(buf, sizeof(buf));
+    printf("%s\n", buf);
 
     gui_mutex = SDL_CreateMutex();
 #ifdef DEBUGGER_MODE
     if (!reload_libgui()) exit(-1); 
 
-    gui_init("Gameboy Debugger", USER_WINDOW_WIDTH*3, USER_WINDOW_HEIGHT+400, 
+    gui_init("Gameboy Debugger", 1750, USER_WINDOW_HEIGHT+400, 
             "fonts/DejaVuSans.ttf", 
             &device, 
             &gui_ext,
@@ -227,7 +222,7 @@ int main(int argc, char **argv){
             if(event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_h) {
                 void *state = gui_pre_reload();
                 if(!reload_libgui()) exit(-1);
-                gui_post_reload(state, &device, &gui_ext);
+                gui_post_reload(state);
                 printf("gui_post_reload succesfully executed\n");
             }
             gui_process_event(&event);

@@ -7,7 +7,10 @@
 #include "gui.h"
 
 uint32_t framebuffer[USER_WINDOW_HEIGHT][USER_WINDOW_WIDTH] = {0};
-uint32_t tiledata[USER_WINDOW_HEIGHT][USER_WINDOW_WIDTH] = {0};
+#define TILE_SCALE_FACTOR 3
+#define TILE_WINDOW_HEIGHT (TILE_SCALE_FACTOR * WINDOW_HEIGHT)
+#define TILE_WINDOW_WIDTH  (TILE_SCALE_FACTOR * WINDOW_WIDTH)
+uint32_t tiledata[TILE_WINDOW_HEIGHT][TILE_WINDOW_WIDTH] = {0};
 
 static DEVICE *device = NULL;
 static GuiExternalInterface *gui_ext = NULL;
@@ -29,6 +32,16 @@ static mu_Context *ctx = NULL;
 static SDL_mutex *gui_mutex = NULL;
 static float bg[3] = { 90, 95, 100 };
 static char buffer[512] = {0};
+
+/* ----   LOAD ROM INPUT ---- */
+static  char logbuf[1000];
+static   int logbuf_updated = 0;
+
+static void write_log(const char *text) {
+  if (logbuf[0]) { strcat(logbuf, "\n"); }
+  strcat(logbuf, text);
+  logbuf_updated = 1;
+}
 
 static int gui_text_width(mu_Font font, const char *text, int len) {
     if (len == -1) { len = strlen(text); }
@@ -65,9 +78,9 @@ void gui_process_framebuffer(int x, int y, uint8_t color){
 #ifdef DEBUGGER_MODE
 
 static void create_tile_data_grid(){
-    for(int x=0; x<USER_WINDOW_WIDTH; x++){
-        for(int y=0; y<USER_WINDOW_HEIGHT; y++){
-            if(x % (8*SCALE_FACTOR) == 0 || y % (8*SCALE_FACTOR) == 0){
+    for(int x=0; x<TILE_WINDOW_WIDTH; x++){
+        for(int y=0; y<TILE_WINDOW_HEIGHT; y++){
+            if(x % (8*TILE_SCALE_FACTOR) == 0 || y % (8*TILE_SCALE_FACTOR) == 0){
                 tiledata[y][x] = 0xFF0000FF;
             }
         }
@@ -108,9 +121,9 @@ static void inspect_tile(int base_x, int base_y){
                 case 0x03: final_color = 0x00000000; break;
             }
 
-            for(int i = 0; i<SCALE_FACTOR; i++){
-                for(int j=0; j<SCALE_FACTOR; j++){
-                    tiledata[SCALE_FACTOR*(y+base_y*8)+i][SCALE_FACTOR*(x+base_x*8)+j] = final_color;
+            for(int i = 0; i<TILE_SCALE_FACTOR; i++){
+                for(int j=0; j<TILE_SCALE_FACTOR; j++){
+                    tiledata[TILE_SCALE_FACTOR*(y+base_y*8)+i][TILE_SCALE_FACTOR*(x+base_x*8)+j] = final_color;
                 }
             }
 
@@ -177,7 +190,7 @@ void gui_post_reload(void *state) {
 static void slow_clock_setting(mu_Context *ctx) {
     static char slow_freq_buf[255];
     bool submitted = false;
-    mu_layout_row(ctx, 2, (int[]) { -70, -1 }, 0);
+    mu_layout_row(ctx, 2, (int[]) { -70, -1 }, 40);
     if (mu_textbox(ctx, slow_freq_buf, sizeof(slow_freq_buf)) & MU_RES_SUBMIT) {
         mu_set_focus(ctx, ctx->last_id);
         submitted = true;
@@ -196,52 +209,131 @@ static void slow_clock_setting(mu_Context *ctx) {
 
 static void debug_window(mu_Context *ctx) {
     //printf("gui_ext->get_emulator_status is at %p\n", gui_ext->get_emulator_status);
-    if (mu_begin_window(ctx, "Debug info", mu_rect(10, 10, 300, 450))) {
+    if (mu_begin_window(ctx, "Debug info", mu_rect(10, 10, 420, 600))) {
         //GetEmulatorStatus(buffer, sizeof(buffer));
         gui_ext->get_emulator_status(buffer, sizeof(buffer));
+
+
         mu_Container *win = mu_get_current_container(ctx);
-        win->rect.w = mu_max(win->rect.w, 320);
-        win->rect.h = mu_max(win->rect.h, 450);
-        mu_layout_row(ctx, 1, (int[]) { -1 }, -100);
-        mu_begin_panel(ctx, "CPU status");
-        
+        win->rect.w = 420;
+        win->rect.h = 600;
+
+        mu_layout_row(ctx, 1, (int[]) { -1 }, 420);
+        mu_begin_panel(ctx, "Emulator status");
         mu_Container *panel = mu_get_current_container(ctx);
+        
         mu_layout_row(ctx, 1, (int[]) { -1 }, -1);
         mu_text(ctx, buffer);
         mu_end_panel(ctx);
 
-        mu_layout_row(ctx, 2, (int[]) { 100, -1 }, -1);
-        mu_layout_begin_column(ctx);
+        mu_layout_row(ctx, 2, (int[]) { 100, 200 }, 30);
         if(mu_button(ctx, "Restart")){
+            SDL_LockMutex(gui_mutex);
             memset(device->memory, 0, 65536);
+            char *path = strdup(device->cartridge.gamePath);
+            gui_ext->shutdown_cartridge();
+
             gui_ext->restart_emulator();
             gui_ext->init_boot_rom();
-            free(device->cartridge.data); // TODO create a shutdown function for cartridge
-            gui_ext->init_cartridge(device->cartridge.gamePath);
-            gui_ext->print_cartridge_info();
+            if(!gui_ext->init_cartridge(path)) {
+                fprintf(stderr, "Error: cartridge not restarted\n");
+            }
+
+            free(path);
+            SDL_UnlockMutex(gui_mutex);
         }
-
-        mu_layout_end_column(ctx);
-        mu_layout_begin_column(ctx);
-
 
         const char* halt_text = device->cpu.halted ? "De-Halt CPU" : "Halt CPU";
         if(mu_button(ctx, halt_text)){
             device->cpu.halted = !device->cpu.halted;
         }
-        
+
+        mu_layout_row(ctx, 1, (int[]){ -1 }, -1);
+        mu_layout_begin_column(ctx);
+        mu_layout_row(ctx, 1, (int[]){ -1 }, 10);
+        mu_label(ctx, "");
+        mu_layout_row(ctx, 1, (int[]){ -1 }, 20);  
+        mu_label(ctx, "CPU clock frequency (Hz):");
         slow_clock_setting(ctx);
-        mu_layout_end_column(ctx);  
+        mu_layout_end_column(ctx);
         mu_end_window(ctx);
     }
 }
 
+
 static void joypad_window(mu_Context *ctx){
-    if (mu_begin_window(ctx, "Joypad", mu_rect(10, 500, 300, 50))) {
+    if (mu_begin_window(ctx, "Joypad", mu_rect(10, 770, 190, 250))) {
+        mu_Container *cnt = mu_get_current_container(ctx);
+        //cnt->rect.w = 420; // Force height
+        /*
+        cnt->rect.h = 190; // Force height
+        cnt->rect.y = 770; // Force height
+        */
+
+
+                           
+        mu_layout_row(ctx, 2, (int[]) { (cnt->rect.w - 14)/2, (cnt->rect.w - 14)/2 }, 30);
+        if (mu_button(ctx, "Start"))  { 
+            device->joypad.start = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+        if (mu_button(ctx, "Select")) { 
+            device->joypad.select = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+
+        mu_label(ctx, ""); 
+
+        int pad_w[] = { 40, 40, 40 }; 
+
+        mu_layout_row(ctx, 2, (int[]){ 2*(cnt->rect.w - 14)/3, (cnt->rect.w - 14)/3 }, 0);
+
+        mu_layout_begin_column(ctx);
+
+        mu_layout_row(ctx, 3, pad_w, 40);
+        mu_label(ctx, ""); // Spacer
+        if (mu_button(ctx, " ^ ")) { /* Up action */ 
+            device->joypad.up = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+
+        mu_layout_row(ctx, 3, pad_w, 40);
+        if (mu_button(ctx, " < ")) { 
+            device->joypad.left = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+        if (mu_button(ctx, " v ")) { 
+            device->joypad.down = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+        if (mu_button(ctx, " > ")) { 
+            device->joypad.right = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+        
+        
+        mu_layout_end_column(ctx);
+        
+        mu_layout_begin_column(ctx);
+        mu_layout_row(ctx, 1, pad_w, 40);
+        if (mu_button(ctx, " A ")) { 
+            device->joypad.a = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+        mu_layout_row(ctx, 1, pad_w, 40);
+        if (mu_button(ctx, " B ")) { 
+            device->joypad.b = true;
+            device->memory[IF_REG] |= 0x10;
+
+        }
+        
+        mu_layout_end_column(ctx);
+        mu_end_window(ctx);
+    }/*
         mu_Container *win = mu_get_current_container(ctx);
         win->rect.w = mu_max(win->rect.w, 100);
         win->rect.h = mu_max(win->rect.h, 200);
-        mu_layout_row(ctx, 2, (int[]) { 0, -1 }, -100);
+        mu_layout_row(ctx, 1, (int[]) { -1 }, -100);
         mu_layout_begin_column(ctx);
         if(mu_button(ctx, "Start")){
             device->joypad.start = true;
@@ -258,40 +350,43 @@ static void joypad_window(mu_Context *ctx){
             device->joypad.start = false;
         }
         mu_layout_end_column(ctx);
-        mu_layout_begin_column(ctx);
-        if(mu_button(ctx, "Start")){
-            device->joypad.start = true;
-            device->memory[IF_REG] |= 0x10;
-        }
 
-        if(mu_button(ctx, "Select")){
+        mu_layout_row(ctx, 3, (int[]){ 20, 20, 20}, 0);
+        mu_layout_begin_column(ctx);
+        if(mu_button(ctx, " ^ ")){
             device->joypad.select = true;
             device->memory[IF_REG] |= 0x10;
         }
 
-        if(mu_button(ctx, "Reset pressed")){
-            device->joypad.select = false;
-            device->joypad.start = false;
+        mu_layout_end_column(ctx);
+        mu_layout_begin_column(ctx);
+        if(mu_button(ctx, " ^ ")){
+            device->joypad.select = true;
+            device->memory[IF_REG] |= 0x10;
         }
+
+        mu_layout_end_column(ctx);
+        mu_layout_begin_column(ctx);
+        if(mu_button(ctx, " ^ ")){
+            device->joypad.select = true;
+            device->memory[IF_REG] |= 0x10;
+        }
+
         mu_layout_end_column(ctx);
 
         mu_end_window(ctx);
     }
+    */
 }
 
 
-/* ----   LOAD ROM INPUT ---- */
-static  char logbuf[1000];
-static   int logbuf_updated = 0;
 
-static void write_log(const char *text) {
-  if (logbuf[0]) { strcat(logbuf, "\n"); }
-  strcat(logbuf, text);
-  logbuf_updated = 1;
-}
 
 static void load_rom_window(mu_Context *ctx){
-    if (mu_begin_window(ctx, "Load ROM", mu_rect(10, 1000, 300, 200))) {
+    if (mu_begin_window(ctx, "Load ROM", mu_rect(10, 615, 420, 150))) {
+    mu_Container *cnt = mu_get_current_container(ctx);
+    //cnt->rect.y = 615;
+    cnt->rect.w = 420;
     /* output ROM INFO panel */
     mu_layout_row(ctx, 1, (int[]) { -1 }, -25);
     mu_begin_panel(ctx, "ROM Info");
@@ -314,25 +409,26 @@ static void load_rom_window(mu_Context *ctx){
     }
     if (mu_button(ctx, "Load")) { submitted = 1; }
     if (submitted) {
-        free(device->cartridge.data); // TODO shutdown function for cartridge
+        SDL_LockMutex(gui_mutex);
+        char *prev_game = strdup(device->cartridge.gamePath);
+        gui_ext->shutdown_cartridge();
         if(gui_ext->init_cartridge(buf)){
             memset(device->memory, 0, 65536);
             gui_ext->restart_emulator();
             gui_ext->init_boot_rom();
-            write_log(device->cartridge.title); 
-            /*const char* desc = cartridge_types[device->memory[0x0147]];
-            if (desc) {
-                sprintf(buf, "Cartridge type: %s\n", desc);
-                write_log(buf);
-            } else {
-                sprintf(buf, "Cartridge type: Unknown (0x%02X)\n", device->memory[0x0147]);
-                write_log(buf);
-            }*/
+            char info[500];
+            gui_ext->print_cartridge_info(info, sizeof(info));
+            write_log(info); 
         }
         else {
             sprintf(buf, "ERROR ROM doesn't exists at: %s\n", buf);
             write_log(buf);
+            
+            gui_ext->shutdown_cartridge();
+            gui_ext->init_cartridge(prev_game);
         }
+        free(prev_game);
+        SDL_UnlockMutex(gui_mutex);
         buf[0] = '\0';
     }
 
@@ -341,8 +437,9 @@ static void load_rom_window(mu_Context *ctx){
 }
 
 static void gameboy_window(mu_Context *ctx){
-    if (mu_begin_window(ctx, "Gameboy Window", mu_rect(340, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
+    if (mu_begin_window(ctx, "Gameboy Window", mu_rect(435, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
         mu_Container *win = mu_get_current_container(ctx);
+        //win->rect.x = 435;
         mu_Rect r = mu_rect(win->body.x,win->body.y, win->body.w, win->body.h);
         mu_draw_image(ctx, r, framebuffer);
         mu_end_window(ctx);
@@ -350,8 +447,12 @@ static void gameboy_window(mu_Context *ctx){
 }
 
 static void tiledata_window(mu_Context *ctx){
-    if (mu_begin_window(ctx, "Tile data", mu_rect(340 + 20 + USER_WINDOW_WIDTH, 10, USER_WINDOW_WIDTH, USER_WINDOW_HEIGHT+24))) {
+    if (mu_begin_window(ctx, "Tile data", mu_rect(1085, 10, TILE_WINDOW_WIDTH, TILE_WINDOW_HEIGHT+24))) {
         mu_Container *win = mu_get_current_container(ctx);
+        win->rect.w = TILE_WINDOW_WIDTH;
+        win->rect.h = TILE_WINDOW_HEIGHT + 24;
+        win->body.w = TILE_WINDOW_WIDTH;
+        win->body.h = TILE_WINDOW_HEIGHT;
         mu_Rect r = mu_rect(win->body.x,win->body.y, win->body.w, win->body.h);
         mu_draw_image(ctx, r, tiledata);
         mu_end_window(ctx);
@@ -395,6 +496,10 @@ void gui_init(const char* window_title,
     mu_init(ctx);
     ctx->text_width = gui_text_width;
     ctx->text_height = gui_text_height;
+    
+    char info[500];
+    gui_ext->print_cartridge_info(info, sizeof(info));
+    write_log(info);
 }
 
 void gui_process_event(SDL_Event *event) {
