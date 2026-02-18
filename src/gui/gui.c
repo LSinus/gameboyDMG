@@ -1,6 +1,10 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <ctype.h>
+#include <sys/stat.h>
 
 #include "../../external/microui.h"
 #include "renderer.h"
@@ -379,7 +383,143 @@ static void joypad_window(mu_Context *ctx){
     */
 }
 
+int invert_case(int c) {
+    if (islower(c))      return toupper(c);
+    else if (isupper(c)) return tolower(c);
+    else                 return c;
+}
+#define CASE_SENSITIVE   0
+#define CASE_INSENSITIVE 1
+char *find_prefix(const char *haystack, const char *needle, uint8_t _case) {
+    if(!haystack || !needle) return NULL;
+    
+    if(*needle == 0) return (char *)haystack;
 
+    const char *h = haystack;
+    const char *n = needle;
+
+    while(*n) {
+        if(*h == 0) return NULL;
+
+        bool match = (*n == *h);
+
+        if(!match && _case == CASE_INSENSITIVE) {
+            match = (invert_case(*n) == *h);
+        }
+
+        if(match) {
+            h++;
+            n++;
+        } else {
+            return NULL;
+        }
+    }
+    return (char *)h;
+}
+
+
+/* This function search for a correspondance at current location for
+ * the content of the buf, if an hint is found the buf is modified
+ * and updated with the content of the hint
+ */ 
+static void search_path_hint(char *rompath_buf, size_t size) {
+    char *dir_name = NULL;
+    char *file_name = NULL;
+    size_t dir_name_size = 0;
+    size_t file_name_size = 0;
+    
+    size_t rompath_size = strlen(rompath_buf);
+    printf("current size is %zu\n", rompath_size);
+    if(rompath_size) {
+        for(ssize_t i = rompath_size - 1; i >= 0; i--) {
+            if(rompath_buf[i] == '/' || rompath_buf[i]  == '\\') {
+                /* We found the last '/' ('\' for windows) then the left
+                 * part is the directory name, the right part is the file
+                 * name to complete */
+                file_name_size = rompath_size - i;
+                dir_name_size  = i;
+                break;
+            }
+        }
+    }
+
+    if (!file_name_size) {
+        if (rompath_size) file_name_size = rompath_size;
+        else return;
+    }
+
+    file_name = malloc(file_name_size + 1);
+    if (!file_name) {
+        fprintf(stderr, "Error: buy more mem!\n ");
+    }
+    memcpy(file_name, rompath_buf + dir_name_size + 1, file_name_size);
+    file_name[file_name_size] = 0;
+
+    // If no dir is present let's assume current directory
+    if (!dir_name_size) {
+        dir_name_size = 2;
+        dir_name = malloc(dir_name_size + 1);
+        if(!dir_name) {
+            fprintf(stderr, "Error: buy more mem!\n ");
+        }
+
+        memcpy(dir_name, "./", dir_name_size);
+        dir_name[dir_name_size] = 0;
+    }
+    else {
+        dir_name = malloc(dir_name_size + 1);
+        if(!dir_name) {
+            fprintf(stderr, "Error: buy more mem!\n ");
+        }
+
+        memcpy(dir_name, rompath_buf, dir_name_size);
+        dir_name[dir_name_size] = 0;
+    }
+
+    DIR *dp;
+    struct dirent *entry;
+    struct stat   statbuf;
+    if ((dp = opendir(dir_name)) == NULL) { 
+        // Directory not found invalid path -> no hints
+        return;
+    }
+
+    //chdir(dir_name);
+    char full_path[1024];
+    while((entry = readdir(dp)) != NULL) {
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_name, entry->d_name);
+        printf("%s\n", full_path);
+        if(lstat(full_path, &statbuf) == -1) continue;
+        printf("pre check, name = %s, needle = %s\n", entry->d_name, file_name);
+        if(find_prefix(entry->d_name, file_name, CASE_INSENSITIVE)) {
+            printf("entry found\n");
+            if(S_ISDIR(statbuf.st_mode)) {
+                /* Found a directory, but ignore . and .. */
+                if(strcmp(".",entry->d_name) == 0 || strcmp("..",entry->d_name) == 0) continue;
+                size_t new_file_size = strlen(entry->d_name);
+                if(rompath_size - file_name_size + new_file_size + 1 < size) {
+                    memcpy(rompath_buf + dir_name_size + 1, entry->d_name, new_file_size);
+                    rompath_buf[dir_name_size + new_file_size + 1] = '/';
+                    rompath_buf[dir_name_size + new_file_size + 2] = 0;
+                }
+
+                printf("%s\n",entry->d_name);
+            }
+            else {
+                printf("%s\n", entry->d_name);
+                size_t new_file_size = strlen(entry->d_name);
+                if(rompath_size - file_name_size + new_file_size + 1 < size) {
+                    memcpy(rompath_buf + dir_name_size + 1, entry->d_name, new_file_size);
+                    rompath_buf[dir_name_size + new_file_size + 1] = 0;
+                }
+
+            }
+        }
+
+    }
+    //chdir("..");
+    closedir(dp);
+}
 
 
 static void load_rom_window(mu_Context *ctx){
@@ -400,10 +540,15 @@ static void load_rom_window(mu_Context *ctx){
     }
 
     /* input textbox + submit button */
-    static char buf[255];
+    static char rompath_buf[512];
     int submitted = 0;
     mu_layout_row(ctx, 2, (int[]) { -70, -1 }, 0);
-    if (mu_textbox(ctx, buf, sizeof(buf)) & MU_RES_SUBMIT) {
+    int res = mu_textbox(ctx, rompath_buf, sizeof(rompath_buf));
+    if (res & MU_RES_HINT) {
+        search_path_hint(rompath_buf, sizeof(rompath_buf));
+        printf("HINT REQUESTED\n");
+    }
+    if (res & MU_RES_SUBMIT) {
         mu_set_focus(ctx, ctx->last_id);
         submitted = 1;
     }
@@ -412,7 +557,7 @@ static void load_rom_window(mu_Context *ctx){
         SDL_LockMutex(gui_mutex);
         char *prev_game = strdup(device->cartridge.gamePath);
         gui_ext->shutdown_cartridge();
-        if(gui_ext->init_cartridge(buf)){
+        if(gui_ext->init_cartridge(rompath_buf)){
             memset(device->memory, 0, 65536);
             gui_ext->restart_emulator();
             gui_ext->init_boot_rom();
@@ -421,15 +566,15 @@ static void load_rom_window(mu_Context *ctx){
             write_log(info); 
         }
         else {
-            sprintf(buf, "ERROR ROM doesn't exists at: %s\n", buf);
-            write_log(buf);
+            snprintf(rompath_buf, sizeof(rompath_buf), "ERROR ROM doesn't exists at: %s\n", rompath_buf);
+            write_log(rompath_buf);
             
             gui_ext->shutdown_cartridge();
             gui_ext->init_cartridge(prev_game);
         }
         free(prev_game);
         SDL_UnlockMutex(gui_mutex);
-        buf[0] = '\0';
+        rompath_buf[0] = '\0';
     }
 
     mu_end_window(ctx);

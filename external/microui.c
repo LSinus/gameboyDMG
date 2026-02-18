@@ -746,6 +746,21 @@ void mu_label(mu_Context *ctx, const char *text) {
   mu_draw_control_text(ctx, text, mu_layout_next(ctx), MU_COLOR_TEXT, 0);
 }
 
+void mu_joypad_button(mu_Context *ctx, const char *label, int *device_key) {
+    mu_Id id = mu_get_id(ctx, label, strlen(label));
+    
+    mu_Rect r = mu_layout_next(ctx);
+    mu_update_control(ctx, id, r, 0);
+    
+    if (ctx->focus == id && (ctx->mouse_down & MU_MOUSE_LEFT)) {
+        *device_key = 1;
+    } else {
+        *device_key = 0;
+    }
+    
+    mu_draw_control_frame(ctx, id, r, MU_COLOR_BUTTON, 0);
+    mu_draw_control_text(ctx, label, r, MU_COLOR_TEXT, MU_OPT_ALIGNCENTER);
+}
 
 int mu_button_ex(mu_Context *ctx, const char *label, int icon, int opt) {
   int res = 0;
@@ -815,6 +830,12 @@ int mu_textbox_raw(mu_Context *ctx, char *buf, int bufsz, mu_Id id, mu_Rect r,
       mu_set_focus(ctx, 0);
       res |= MU_RES_SUBMIT;
     }
+    
+    if (ctx->key_pressed & MU_KEY_TAB) {
+        res |= MU_RES_HINT;
+    }
+
+    
   }
 
   /* draw */

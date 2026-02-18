@@ -31,6 +31,7 @@ const char key_map[256] = {
   [ SDLK_RALT         & 0xff ] = MU_KEY_ALT,
   [ SDLK_RETURN       & 0xff ] = MU_KEY_RETURN,
   [ SDLK_BACKSPACE    & 0xff ] = MU_KEY_BACKSPACE,
+  [ SDLK_TAB          & 0xff ] = MU_KEY_TAB,
 };
 
 static const char * codepoints_map[5] = { "\u1000", "\u2715", "\u2713", "\u25B6", "\u25BC"};

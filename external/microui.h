@@ -73,7 +73,8 @@ enum {
 enum {
   MU_RES_ACTIVE       = (1 << 0),
   MU_RES_SUBMIT       = (1 << 1),
-  MU_RES_CHANGE       = (1 << 2)
+  MU_RES_CHANGE       = (1 << 2),
+  MU_RES_HINT         = (1 << 3)
 };
 
 enum {
@@ -103,7 +104,8 @@ enum {
   MU_KEY_CTRL         = (1 << 1),
   MU_KEY_ALT          = (1 << 2),
   MU_KEY_BACKSPACE    = (1 << 3),
-  MU_KEY_RETURN       = (1 << 4)
+  MU_KEY_RETURN       = (1 << 4),
+  MU_KEY_TAB          = (1 << 5)
 };
 
 
@@ -282,6 +284,7 @@ void mu_update_control(mu_Context *ctx, mu_Id id, mu_Rect rect, int opt);
 void mu_text(mu_Context *ctx, const char *text);
 void mu_label(mu_Context *ctx, const char *text);
 int mu_button_ex(mu_Context *ctx, const char *label, int icon, int opt);
+void mu_joypad_button(mu_Context *ctx, const char *label, int *device_key);
 int mu_checkbox(mu_Context *ctx, const char *label, int *state);
 int mu_textbox_raw(mu_Context *ctx, char *buf, int bufsz, mu_Id id, mu_Rect r, int opt);
 int mu_textbox_ex(mu_Context *ctx, char *buf, int bufsz, int opt);
