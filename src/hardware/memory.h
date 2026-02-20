@@ -6,6 +6,8 @@
 #include <stdio.h>
 
 // REGISTER DEFINED ADDRESSES
+#define SB_REG   0xFF01 // Serial trasfer register
+#define SC_REG   0xFF02 // Serial control register
 #define DIV_REG  0xFF04 // Divider register
 #define TIMA_REG 0xFF05 // Timer counter register
 #define TMA_REG  0xFF06 // Timer modulo register

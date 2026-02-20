@@ -51,7 +51,14 @@ void WriteMem(uint16_t addr, uint8_t data){
         device.ppu.ly = 0;
         ppu_set_mode(MODE_0_HBLANK);
     }
+    
+    if(addr == SC_REG) {
+        WriteToSerialPort(data);
+    }
 
+    if(addr == SC_REG) {
+        WriteSerialControlReg(data);
+    }
 
     if(addr == LY_REG) return; // LY is not writable
 
@@ -131,8 +138,13 @@ uint8_t ReadMem(uint16_t addr){
     }
 
     // Serial port transfer logic
-    if(addr == 0xFF01){
+    if(addr == SB_REG){
         return ReadFromSerialPort();
+    }
+ 
+    // Serial port control logic
+    if(addr == SC_REG) {
+        return ReadSerialControlReg();
     }
 
     if(addr >= 0xA000 && addr <= 0xBFFF){

@@ -180,7 +180,7 @@ void InitializePowerOnState(){
     InitializePPU();
     
     // Initialize Serial port 
-    device.serial_port.cycles_elapsed = 0;
+    device.serial_port.cpu_cycles_elapsed = 0;
     device.serial_port.transfer_in_progress = false;
 
     // Initialize I/O registers
